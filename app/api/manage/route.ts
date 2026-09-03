@@ -28,7 +28,7 @@ export async function POST(request: Request) {
     return Response.json({ ok: true, id });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Не удалось сохранить изменения';
-    const duplicate = /UNIQUE constraint failed: videos\.normalized_url/i.test(message);
+    const duplicate = /UNIQUE constraint failed: (videos\.normalized_url|video_url_aliases\.canonical_url)|Этот ролик уже добавлен/i.test(message);
     const duplicateName = /UNIQUE constraint failed: (creators|producers)\.name/i.test(message);
     return Response.json(
       { error: duplicate ? 'Этот ролик уже добавлен' : duplicateName ? 'Такое имя уже используется' : message },

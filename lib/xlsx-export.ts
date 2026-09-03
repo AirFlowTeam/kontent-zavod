@@ -40,10 +40,10 @@ function columnName(index: number) {
 function worksheetXml(sheet: Sheet) {
   const rows = sheet.rows
     .map((row, rowIndex) => {
+      const rowIsHeader = rowIndex === 0 || (sheet.name === 'Общая статистика' && row[0] === 'Продюсер');
       const cells = row.map((cell, columnIndex) => {
         const ref = `${columnName(columnIndex)}${rowIndex + 1}`;
-        const header = rowIndex === 0 || (sheet.name === 'Общая статистика' && rowIndex === 13);
-        const style = header ? 1 : typeof cell === 'number' ? 2 : 0;
+        const style = rowIsHeader ? 1 : typeof cell === 'number' ? 2 : 0;
         if (typeof cell === 'number') return `<c r="${ref}" s="${style}"><v>${cell}</v></c>`;
         return `<c r="${ref}" t="inlineStr" s="${style}"><is><t>${escapeXml(cell)}</t></is></c>`;
       }).join('');
@@ -114,25 +114,31 @@ function creatorSheet(type: 'UGC' | 'AI', rows: SummaryRow[]) {
 }
 
 export function createGoogleSheetsWorkbook(data: ReportExportData) {
+  const errorCount = data.videos.filter((video) => video.status === 'error').length;
+  const deletedCount = data.videos.filter((video) => video.status === 'deleted').length;
   const summaryRows: Cell[][] = [
     ['Показатель', 'Значение', '', '', ''],
     ['Период', data.period],
-    ['Всего креаторов', data.metrics.creatorCount],
-    ['Всего роликов', data.metrics.videoCount],
-    ['Общий охват', data.metrics.reach],
-    ['Средний охват ролика', data.metrics.average],
-    ['UGC-креаторов', data.ugc.creatorCount],
-    ['UGC-роликов', data.ugc.videoCount],
+    ['Записей в текущей выборке', data.videos.length],
+    ['Активных роликов', data.metrics.videoCount],
+    ['Со статусом «Ошибка»', errorCount],
+    ['Со статусом «Удалён»', deletedCount],
+    ['Креаторов с активными публикациями', data.metrics.creatorCount],
+    ['Общий охват активных роликов', data.metrics.reach],
+    ['Средний охват активного ролика', data.metrics.average],
+    ['UGC-креаторов с публикациями', data.ugc.creatorCount],
+    ['Активных UGC-роликов', data.ugc.videoCount],
     ['Охват UGC', data.ugc.reach],
-    ['AI-креаторов', data.ai.creatorCount],
-    ['AI-роликов', data.ai.videoCount],
+    ['AI-креаторов с публикациями', data.ai.creatorCount],
+    ['Активных AI-роликов', data.ai.videoCount],
     ['Охват AI', data.ai.reach],
+    ['Примечание', 'Охваты и средние рассчитаны только по активным роликам; лист «Все ролики» сохраняет все статусы.'],
     ['', '', '', '', ''],
     ['Продюсер', 'Креаторов', 'Роликов', 'Общий охват', 'Средний охват'],
     ...data.producerRows.map((row) => [row.name, row.creatorCount ?? 0, row.videoCount, row.reach, row.average]),
   ];
   const sheets: Sheet[] = [
-    { name: 'Общая статистика', rows: summaryRows, widths: [28, 18, 15, 20, 20] },
+    { name: 'Общая статистика', rows: summaryRows, widths: [46, 30, 15, 20, 20] },
     {
       name: 'Все ролики',
       widths: [15, 22, 10, 20, 16, 54, 16, 14],

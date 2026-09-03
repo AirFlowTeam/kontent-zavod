@@ -15,6 +15,13 @@
       "when": 1788431542508,
       "tag": "0001_nosy_lilandra",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1788433261715,
+      "tag": "0002_exotic_otto_octavius",
+      "breakpoints": true
     }
   ]
 }

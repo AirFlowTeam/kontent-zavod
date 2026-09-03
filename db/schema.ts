@@ -72,6 +72,17 @@ export const videos = sqliteTable(
   ],
 );
 
+export const videoUrlAliases = sqliteTable(
+  'video_url_aliases',
+  {
+    canonicalUrl: text('canonical_url').primaryKey(),
+    videoId: integer('video_id')
+      .notNull()
+      .references(() => videos.id),
+  },
+  (table) => [index('idx_video_url_aliases_video_id').on(table.videoId)],
+);
+
 export const reachHistory = sqliteTable(
   'reach_history',
   {

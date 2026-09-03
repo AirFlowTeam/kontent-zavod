@@ -101,6 +101,7 @@ export default function ContentFactoryApp() {
   const [selectedCreatorId, setSelectedCreatorId] = useState<number | null>(null);
   const [selectedProducerId, setSelectedProducerId] = useState<number | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
+  const actionsDisabled = loading || Boolean(error);
 
   const notify = useCallback((message: string) => {
     setToast(message);
@@ -175,9 +176,15 @@ export default function ContentFactoryApp() {
   function setFilter<K extends keyof Filters>(key: K, value: Filters[K]) {
     setFilters((current) => {
       const next = { ...current, [key]: value };
+      if (key === 'from' && value && next.to && value > next.to) next.to = String(value);
+      if (key === 'to' && value && next.from && value < next.from) next.from = String(value);
       if (key === 'producerId' && current.creatorId) {
         const creator = data.creators.find((item) => item.id === Number(current.creatorId));
         if (value && creator?.producerId !== Number(value)) next.creatorId = '';
+      }
+      if (key === 'type' && current.creatorId) {
+        const creator = data.creators.find((item) => item.id === Number(current.creatorId));
+        if (value && creator?.type !== value) next.creatorId = '';
       }
       return next;
     });
@@ -186,15 +193,21 @@ export default function ContentFactoryApp() {
   function changeView(next: View) {
     setView(next);
     setMobileMenuOpen(false);
-    if (next === 'ugc' || next === 'ai') setFilters((current) => ({ ...current, type: '' }));
+    if (next === 'ugc' || next === 'ai') {
+      const nextType: CreatorType = next === 'ugc' ? 'UGC' : 'AI';
+      setFilters((current) => {
+        const creator = data.creators.find((item) => item.id === Number(current.creatorId));
+        return { ...current, type: '', creatorId: creator && creator.type !== nextType ? '' : current.creatorId };
+      });
+    }
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
-  function openAddVideo() { setEditingVideo(null); setVideoOpen(true); }
+  function openAddVideo() { if (actionsDisabled) return; setEditingVideo(null); setVideoOpen(true); }
   function openEditVideo(video: Video) { setSelectedCreatorId(null); setEditingVideo(video); setVideoOpen(true); }
-  function openAddCreator() { setEditingCreator(null); setCreatorOpen(true); }
+  function openAddCreator() { if (actionsDisabled) return; setEditingCreator(null); setCreatorOpen(true); }
   function openEditCreator(creator: Creator) { setSelectedCreatorId(null); setEditingCreator(creator); setCreatorOpen(true); }
-  function openAddProducer() { setEditingProducer(null); setProducerOpen(true); }
+  function openAddProducer() { if (actionsDisabled) return; setEditingProducer(null); setProducerOpen(true); }
   function openEditProducer(producer: Producer) { setSelectedProducerId(null); setEditingProducer(producer); setProducerOpen(true); }
 
   const exportData = useMemo(() => ({
@@ -203,7 +216,7 @@ export default function ContentFactoryApp() {
   }), [activeVideos, aiMetrics, data.creators, data.producers, filteredRecords, filters.from, filters.to, metrics, ugcMetrics]);
 
   function downloadReport() { downloadGoogleSheetsReport(exportData); notify('Отчёт скачан — его можно импортировать в Google Таблицы'); }
-  function beginExport() { downloadReport(); setExportOpen(true); }
+  function beginExport() { if (!actionsDisabled) { downloadReport(); setExportOpen(true); } }
 
   const content = loading ? <LoadingState /> : error ? <ErrorState message={error} onRetry={() => void loadData()} /> : view === 'dashboard' ? (
     <DashboardSection metrics={metrics} ugc={ugcMetrics} ai={aiMetrics} creatorRows={creatorRows} producerRows={producerRows} typeFilter={filters.type} onViewType={(type) => changeView(type === 'UGC' ? 'ugc' : 'ai')} onCreator={setSelectedCreatorId} onProducer={setSelectedProducerId} />
@@ -212,7 +225,7 @@ export default function ContentFactoryApp() {
   ) : view === 'videos' ? (
     <VideosSection videos={filteredRecords} activeMetrics={metrics} onEdit={openEditVideo} onAdd={openAddVideo} />
   ) : (
-    <ProducersSection producers={matchingProducers} rows={producerRows} onProducer={setSelectedProducerId} onEdit={openEditProducer} onAdd={openAddProducer} />
+    <ProducersSection producers={matchingProducers} creators={data.creators} rows={producerRows} onProducer={setSelectedProducerId} onEdit={openEditProducer} onAdd={openAddProducer} />
   );
 
   return (
@@ -224,18 +237,18 @@ export default function ContentFactoryApp() {
             <Brand />
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="outline" className="hidden h-10 sm:inline-flex" onClick={beginExport} disabled={loading}><FileSpreadsheet data-icon="inline-start" /> Выгрузить в Google Таблицы</Button>
-            <Button className="h-10 px-3.5 shadow-sm" onClick={openAddVideo} disabled={loading}><Plus data-icon="inline-start" /><span className="hidden sm:inline">Добавить ролик</span><span className="sm:hidden">Ролик</span></Button>
+            <Button variant="outline" className="hidden h-10 sm:inline-flex" onClick={beginExport} disabled={actionsDisabled}><FileSpreadsheet data-icon="inline-start" /> Выгрузить в Google Таблицы</Button>
+            <Button className="h-10 px-3.5 shadow-sm" onClick={openAddVideo} disabled={actionsDisabled}><Plus data-icon="inline-start" /><span className="hidden sm:inline">Добавить ролик</span><span className="sm:hidden">Ролик</span></Button>
           </div>
         </div>
       </header>
 
       <div className="mx-auto grid max-w-[1540px] lg:grid-cols-[230px_minmax(0,1fr)]">
-        <Sidebar view={view} onView={changeView} onAddCreator={openAddCreator} onAddProducer={openAddProducer} />
+        <Sidebar view={view} onView={changeView} onAddCreator={openAddCreator} onAddProducer={openAddProducer} actionsDisabled={actionsDisabled} />
         <section className="min-w-0 px-4 pb-24 pt-6 sm:px-6 lg:px-8 lg:pb-12 lg:pt-8">
           <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
             <div><Badge variant="outline" className="mb-3 border-primary/20 bg-primary/5 text-primary">{periodLabel(filters.from, filters.to)}</Badge><h1 className="text-3xl font-extrabold tracking-[-0.045em] sm:text-[2.25rem]">{viewCopy[view].title}</h1><p className="mt-2 max-w-xl text-sm text-muted-foreground">{viewCopy[view].description}</p></div>
-            <Button variant="outline" className="self-start sm:hidden" onClick={() => setMobileFiltersOpen(true)}><Filter data-icon="inline-start" /> Фильтры · {activeFilterCount}</Button>
+            <Button variant="outline" className="self-start lg:hidden" onClick={() => setMobileFiltersOpen(true)}><Filter data-icon="inline-start" /> Фильтры · {activeFilterCount}</Button>
           </div>
 
           <div className="mt-6 hidden lg:block"><FilterBar filters={filters} setFilter={setFilter} data={data} forcedType={forcedType} onReset={() => setFilters(defaultFilters())} resultCount={metrics.videoCount} /></div>
@@ -243,10 +256,10 @@ export default function ContentFactoryApp() {
         </section>
       </div>
 
-      <div className="fixed inset-x-4 bottom-4 z-20 grid grid-cols-[1fr_auto] gap-2 rounded-2xl border border-border bg-card/95 p-2 shadow-[0_18px_55px_rgba(35,31,55,.18)] backdrop-blur-xl sm:hidden"><Button variant="outline" onClick={beginExport} disabled={loading}><FileSpreadsheet data-icon="inline-start" /> Экспорт</Button><Button onClick={openAddVideo} disabled={loading}><Plus data-icon="inline-start" /> Добавить ролик</Button></div>
+      <div className="fixed inset-x-4 bottom-4 z-20 grid grid-cols-[1fr_auto] gap-2 rounded-2xl border border-border bg-card/95 p-2 shadow-[0_18px_55px_rgba(35,31,55,.18)] backdrop-blur-xl sm:hidden"><Button variant="outline" onClick={beginExport} disabled={actionsDisabled}><FileSpreadsheet data-icon="inline-start" /> Экспорт</Button><Button onClick={openAddVideo} disabled={actionsDisabled}><Plus data-icon="inline-start" /> Добавить ролик</Button></div>
 
-      <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}><SheetContent side="left" className="w-[310px]"><SheetHeader><Brand /><SheetTitle className="sr-only">Навигация</SheetTitle><SheetDescription className="sr-only">Разделы сервиса</SheetDescription></SheetHeader><nav className="space-y-1 px-3">{navigation.map((item) => <button key={item.id} onClick={() => changeView(item.id)} className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-semibold ${view === item.id ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}><item.icon className="size-4" />{item.label}</button>)}</nav><div className="mt-auto space-y-2 border-t border-border p-4"><Button variant="outline" className="w-full justify-start" onClick={() => { setMobileMenuOpen(false); openAddCreator(); }}><UserRoundPlus data-icon="inline-start" /> Добавить креатора</Button><Button variant="outline" className="w-full justify-start" onClick={() => { setMobileMenuOpen(false); openAddProducer(); }}><UsersRound data-icon="inline-start" /> Добавить продюсера</Button></div></SheetContent></Sheet>
-      <Sheet open={mobileFiltersOpen} onOpenChange={setMobileFiltersOpen}><SheetContent side="bottom" className="max-h-[90vh] overflow-y-auto rounded-t-3xl"><SheetHeader><SheetTitle>Фильтры</SheetTitle><SheetDescription>Все показатели пересчитаются одновременно.</SheetDescription></SheetHeader><div className="px-4 pb-4"><FilterFields filters={filters} setFilter={setFilter} data={data} forcedType={forcedType} /><div className="mt-5 grid grid-cols-2 gap-2"><Button variant="outline" onClick={() => setFilters(defaultFilters())}><RotateCcw data-icon="inline-start" /> Сбросить</Button><Button onClick={() => setMobileFiltersOpen(false)}>Показать · {metrics.videoCount}</Button></div></div></SheetContent></Sheet>
+      <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}><SheetContent side="left" className="w-[310px]"><SheetHeader><Brand /><SheetTitle className="sr-only">Навигация</SheetTitle><SheetDescription className="sr-only">Разделы сервиса</SheetDescription></SheetHeader><nav className="space-y-1 px-3">{navigation.map((item) => <button key={item.id} onClick={() => changeView(item.id)} className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-semibold ${view === item.id ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}><item.icon className="size-4" />{item.label}</button>)}</nav><div className="mt-auto space-y-2 border-t border-border p-4"><Button variant="outline" className="w-full justify-start" disabled={actionsDisabled} onClick={() => { setMobileMenuOpen(false); openAddCreator(); }}><UserRoundPlus data-icon="inline-start" /> Добавить креатора</Button><Button variant="outline" className="w-full justify-start" disabled={actionsDisabled} onClick={() => { setMobileMenuOpen(false); openAddProducer(); }}><UsersRound data-icon="inline-start" /> Добавить продюсера</Button></div></SheetContent></Sheet>
+      <Sheet open={mobileFiltersOpen} onOpenChange={setMobileFiltersOpen}><SheetContent side="bottom" className="max-h-[90vh] overflow-y-auto rounded-t-3xl"><SheetHeader><SheetTitle>Фильтры</SheetTitle><SheetDescription>Все показатели пересчитаются одновременно.</SheetDescription></SheetHeader><div className="px-4 pb-4"><FilterFields filters={filters} setFilter={setFilter} data={data} forcedType={forcedType} idPrefix="mobile" /><div className="mt-5 grid grid-cols-2 gap-2"><Button variant="outline" onClick={() => setFilters(defaultFilters())}><RotateCcw data-icon="inline-start" /> Сбросить</Button><Button onClick={() => setMobileFiltersOpen(false)}>Показать · {metrics.videoCount} активных</Button></div></div></SheetContent></Sheet>
 
       <VideoDialog open={videoOpen} onClose={() => setVideoOpen(false)} data={data} video={editingVideo} mutate={mutate} />
       <CreatorDialog open={creatorOpen} onClose={() => setCreatorOpen(false)} data={data} creator={editingCreator} mutate={mutate} />
@@ -264,17 +277,19 @@ function Brand() {
   return <div className="flex items-center gap-3"><div className="grid size-9 place-items-center rounded-xl bg-primary text-primary-foreground shadow-[0_8px_24px_-10px_var(--primary)]"><Sparkles className="size-4" /></div><div><p className="text-sm font-extrabold tracking-[-0.03em]">КОНТЕНТ-ЗАВОД</p><p className="text-[11px] text-muted-foreground">Операционный центр</p></div></div>;
 }
 
-function Sidebar({ view, onView, onAddCreator, onAddProducer }: { view: View; onView: (view: View) => void; onAddCreator: () => void; onAddProducer: () => void }) {
-  return <aside className="sticky top-16 hidden h-[calc(100vh-64px)] border-r border-border/75 px-4 py-6 lg:flex lg:flex-col"><p className="mb-3 px-3 text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground">Рабочее пространство</p><nav className="space-y-1">{navigation.map((item) => <button key={item.id} onClick={() => onView(item.id)} className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold transition-colors ${view === item.id ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}><item.icon className="size-4" />{item.label}</button>)}</nav><div className="mt-auto space-y-2"><p className="px-3 text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground">Справочники</p><button onClick={onAddCreator} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold text-muted-foreground hover:bg-muted hover:text-foreground"><UserRoundPlus className="size-4" />Добавить креатора</button><button onClick={onAddProducer} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold text-muted-foreground hover:bg-muted hover:text-foreground"><UsersRound className="size-4" />Добавить продюсера</button><div className="mt-3 rounded-2xl border border-border bg-card p-4"><p className="text-xs font-bold">Расчёты автоматические</p><p className="mt-1 text-xs leading-relaxed text-muted-foreground">Новый ролик сразу обновляет все итоги.</p><div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted"><div className="h-full w-full rounded-full bg-[var(--success)]" /></div></div></div></aside>;
+function Sidebar({ view, onView, onAddCreator, onAddProducer, actionsDisabled }: { view: View; onView: (view: View) => void; onAddCreator: () => void; onAddProducer: () => void; actionsDisabled: boolean }) {
+  return <aside className="sticky top-16 hidden h-[calc(100vh-64px)] border-r border-border/75 px-4 py-6 lg:flex lg:flex-col"><p className="mb-3 px-3 text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground">Рабочее пространство</p><nav className="space-y-1">{navigation.map((item) => <button key={item.id} onClick={() => onView(item.id)} className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold transition-colors ${view === item.id ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}><item.icon className="size-4" />{item.label}</button>)}</nav><div className="mt-auto space-y-2"><p className="px-3 text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground">Справочники</p><button disabled={actionsDisabled} onClick={onAddCreator} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold text-muted-foreground hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-45"><UserRoundPlus className="size-4" />Добавить креатора</button><button disabled={actionsDisabled} onClick={onAddProducer} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold text-muted-foreground hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-45"><UsersRound className="size-4" />Добавить продюсера</button><div className="mt-3 rounded-2xl border border-border bg-card p-4"><p className="text-xs font-bold">Расчёты автоматические</p><p className="mt-1 text-xs leading-relaxed text-muted-foreground">Новый ролик сразу обновляет все итоги.</p><div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted"><div className="h-full w-full rounded-full bg-[var(--success)]" /></div></div></div></aside>;
 }
 
-function FilterFields({ filters, setFilter, data, forcedType }: { filters: Filters; setFilter: <K extends keyof Filters>(key: K, value: Filters[K]) => void; data: DashboardData; forcedType: '' | CreatorType }) {
-  const creators = data.creators.filter((creator) => !filters.producerId || creator.producerId === Number(filters.producerId));
-  return <div className="grid gap-4 lg:grid-cols-[1fr_1fr_.8fr_1fr_1fr_1fr] lg:items-end"><div className="space-y-2"><Label htmlFor="filter-from" className="text-xs text-muted-foreground">Период с</Label><Input id="filter-from" type="date" value={filters.from} onChange={(event) => setFilter('from', event.target.value)} /></div><div className="space-y-2"><Label htmlFor="filter-to" className="text-xs text-muted-foreground">по</Label><Input id="filter-to" type="date" value={filters.to} onChange={(event) => setFilter('to', event.target.value)} /></div><div className="space-y-2"><Label htmlFor="filter-type" className="text-xs text-muted-foreground">Тип</Label><NativeSelect id="filter-type" className="w-full" value={forcedType || filters.type} disabled={Boolean(forcedType)} onChange={(event) => setFilter('type', event.target.value as Filters['type'])}><NativeSelectOption value="">Все</NativeSelectOption><NativeSelectOption value="UGC">UGC</NativeSelectOption><NativeSelectOption value="AI">AI</NativeSelectOption></NativeSelect></div><div className="space-y-2"><Label htmlFor="filter-producer" className="text-xs text-muted-foreground">Продюсер</Label><NativeSelect id="filter-producer" className="w-full" value={filters.producerId} onChange={(event) => setFilter('producerId', event.target.value)}><NativeSelectOption value="">Все</NativeSelectOption>{data.producers.map((producer) => <NativeSelectOption key={producer.id} value={producer.id}>{producer.name}</NativeSelectOption>)}</NativeSelect></div><div className="space-y-2"><Label htmlFor="filter-creator" className="text-xs text-muted-foreground">Креатор</Label><NativeSelect id="filter-creator" className="w-full" value={filters.creatorId} onChange={(event) => setFilter('creatorId', event.target.value)}><NativeSelectOption value="">Все</NativeSelectOption>{creators.map((creator) => <NativeSelectOption key={creator.id} value={creator.id}>{creator.name}</NativeSelectOption>)}</NativeSelect></div><div className="space-y-2"><Label htmlFor="filter-platform" className="text-xs text-muted-foreground">Площадка</Label><NativeSelect id="filter-platform" className="w-full" value={filters.platformId} onChange={(event) => setFilter('platformId', event.target.value)}><NativeSelectOption value="">Все</NativeSelectOption>{data.platforms.map((platform) => <NativeSelectOption key={platform.id} value={platform.id}>{platform.name}</NativeSelectOption>)}</NativeSelect></div></div>;
+function FilterFields({ filters, setFilter, data, forcedType, idPrefix }: { filters: Filters; setFilter: <K extends keyof Filters>(key: K, value: Filters[K]) => void; data: DashboardData; forcedType: '' | CreatorType; idPrefix: 'desktop' | 'mobile' }) {
+  const selectedType = forcedType || filters.type;
+  const creators = data.creators.filter((creator) => (!filters.producerId || creator.producerId === Number(filters.producerId)) && (!selectedType || creator.type === selectedType));
+  const id = (name: string) => `${idPrefix}-filter-${name}`;
+  return <div className="grid gap-4 lg:grid-cols-[1fr_1fr_.8fr_1fr_1fr_1fr] lg:items-end"><div className="space-y-2"><Label htmlFor={id('from')} className="text-xs text-muted-foreground">Период с</Label><Input id={id('from')} type="date" max={filters.to || undefined} value={filters.from} onChange={(event) => setFilter('from', event.target.value)} /></div><div className="space-y-2"><Label htmlFor={id('to')} className="text-xs text-muted-foreground">по</Label><Input id={id('to')} type="date" min={filters.from || undefined} value={filters.to} onChange={(event) => setFilter('to', event.target.value)} /></div><div className="space-y-2"><Label htmlFor={id('type')} className="text-xs text-muted-foreground">Тип</Label><NativeSelect id={id('type')} className="w-full" value={forcedType || filters.type} disabled={Boolean(forcedType)} onChange={(event) => setFilter('type', event.target.value as Filters['type'])}><NativeSelectOption value="">Все</NativeSelectOption><NativeSelectOption value="UGC">UGC</NativeSelectOption><NativeSelectOption value="AI">AI</NativeSelectOption></NativeSelect></div><div className="space-y-2"><Label htmlFor={id('producer')} className="text-xs text-muted-foreground">Продюсер</Label><NativeSelect id={id('producer')} className="w-full" value={filters.producerId} onChange={(event) => setFilter('producerId', event.target.value)}><NativeSelectOption value="">Все</NativeSelectOption>{data.producers.map((producer) => <NativeSelectOption key={producer.id} value={producer.id}>{producer.name}</NativeSelectOption>)}</NativeSelect></div><div className="space-y-2"><Label htmlFor={id('creator')} className="text-xs text-muted-foreground">Креатор</Label><NativeSelect id={id('creator')} className="w-full" value={filters.creatorId} onChange={(event) => setFilter('creatorId', event.target.value)}><NativeSelectOption value="">Все</NativeSelectOption>{creators.map((creator) => <NativeSelectOption key={creator.id} value={creator.id}>{creator.name}</NativeSelectOption>)}</NativeSelect></div><div className="space-y-2"><Label htmlFor={id('platform')} className="text-xs text-muted-foreground">Площадка</Label><NativeSelect id={id('platform')} className="w-full" value={filters.platformId} onChange={(event) => setFilter('platformId', event.target.value)}><NativeSelectOption value="">Все</NativeSelectOption>{data.platforms.map((platform) => <NativeSelectOption key={platform.id} value={platform.id}>{platform.name}</NativeSelectOption>)}</NativeSelect></div></div>;
 }
 
 function FilterBar({ filters, setFilter, data, forcedType, onReset, resultCount }: { filters: Filters; setFilter: <K extends keyof Filters>(key: K, value: Filters[K]) => void; data: DashboardData; forcedType: '' | CreatorType; onReset: () => void; resultCount: number }) {
-  return <div className="rounded-2xl border border-border/80 bg-card p-4"><FilterFields filters={filters} setFilter={setFilter} data={data} forcedType={forcedType} /><div className="mt-3 flex items-center justify-between border-t border-border/70 pt-3"><p className="text-xs text-muted-foreground">По выбранным фильтрам · <strong className="text-foreground">{resultCount} роликов</strong></p><Button variant="ghost" size="sm" onClick={onReset}><RotateCcw data-icon="inline-start" /> Сбросить</Button></div></div>;
+  return <div className="rounded-2xl border border-border/80 bg-card p-4"><FilterFields filters={filters} setFilter={setFilter} data={data} forcedType={forcedType} idPrefix="desktop" /><div className="mt-3 flex items-center justify-between border-t border-border/70 pt-3"><p className="text-xs text-muted-foreground">По выбранным фильтрам · <strong className="text-foreground">{resultCount} активных роликов</strong></p><Button variant="ghost" size="sm" onClick={onReset}><RotateCcw data-icon="inline-start" /> Сбросить</Button></div></div>;
 }
 
 function LoadingState() {
