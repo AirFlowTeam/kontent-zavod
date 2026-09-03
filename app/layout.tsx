@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000'),
+  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? 'https://kontent-zavod-2026.mikhailzhees.chatgpt.site'),
   title: 'Контент-завод — учёт креаторов и охватов',
   description: 'Внутренний сервис для учёта публикаций, креаторов и охватов.',
   openGraph: {
