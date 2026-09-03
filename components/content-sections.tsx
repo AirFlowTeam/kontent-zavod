@@ -108,7 +108,7 @@ export function CreatorTable({ rows, onCreator, title = 'Результаты к
           </div>
           <div className="divide-y divide-border md:hidden">
             {rows.map((row) => (
-              <button key={row.id} onClick={() => onCreator(row.id)} className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left hover:bg-muted/40">
+              <button key={row.id} aria-label={`Открыть карточку креатора ${row.name}`} onClick={() => onCreator(row.id)} className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left hover:bg-muted/40">
                 <div><div className="flex items-center gap-2"><span className="font-bold">{row.name}</span><TypeBadge type={row.type!} /></div><p className="mt-1 text-xs text-muted-foreground">{row.producerName} · {formatNumber(row.videoCount)} роликов</p></div>
                 <div className="text-right"><p className="font-bold tabular-nums">{formatNumber(row.reach)}</p><p className="text-[11px] text-muted-foreground">охват</p></div>
               </button>
@@ -145,7 +145,7 @@ export function DashboardSection({ metrics, ugc, ai, creatorRows, producerRows, 
           <div className="flex items-center justify-between px-5 py-4 sm:px-6"><div><h2 className="font-bold">По продюсерам</h2><p className="mt-0.5 text-xs text-muted-foreground">Ответственные и результат команды</p></div><UsersRound className="size-4 text-muted-foreground" /></div>
           {producerRows.length === 0 ? <EmptyState title="Нет данных" description="В выборке пока нет публикаций." /> : <div className="divide-y divide-border border-t border-border">
             {producerRows.slice(0, 4).map((row) => (
-              <button key={row.id} onClick={() => onProducer(row.id)} className="grid w-full grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-4 px-5 py-3 text-left hover:bg-muted/40 sm:px-6">
+              <button key={row.id} aria-label={`Открыть карточку продюсера ${row.name}`} onClick={() => onProducer(row.id)} className="grid w-full grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-4 px-5 py-3 text-left hover:bg-muted/40 sm:px-6">
                 <div className="min-w-0"><p className="truncate text-sm font-bold">{row.name}</p><p className="text-[11px] text-muted-foreground">{formatNumber(row.creatorCount ?? 0)} креаторов</p></div>
                 <div className="text-right"><p className="text-sm font-bold tabular-nums">{formatNumber(row.videoCount)}</p><p className="text-[10px] text-muted-foreground">роликов</p></div>
                 <div className="min-w-24 text-right"><p className="text-sm font-bold tabular-nums">{formatNumber(row.reach)}</p><p className="text-[10px] text-muted-foreground">охват</p></div>

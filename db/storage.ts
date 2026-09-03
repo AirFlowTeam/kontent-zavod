@@ -120,7 +120,7 @@ export function normalizeUrl(value: string) {
   parsed.hostname = parsed.hostname.toLowerCase().replace(/^(www\.|m\.)/, '');
   parsed.hash = '';
   const tracking = ['fbclid', 'gclid', 'igshid', 'si', 'share_id'];
-  for (const key of [...parsed.searchParams.keys()]) {
+  for (const key of Array.from(parsed.searchParams.keys())) {
     if (key.toLowerCase().startsWith('utm_') || tracking.includes(key.toLowerCase())) parsed.searchParams.delete(key);
   }
   parsed.searchParams.sort();
@@ -194,7 +194,7 @@ export async function getDashboardData() {
 }
 
 function cleanName(value: unknown, label: string) {
-  const name = String(value ?? '').trim();
+  const name = typeof value === 'string' ? value.trim() : '';
   if (name.length < 2 || name.length > 80) throw new Error(`${label}: от 2 до 80 символов`);
   return name;
 }
@@ -270,13 +270,13 @@ export async function updateCreator(input: Record<string, unknown>) {
 function videoValues(input: Record<string, unknown>) {
   const reach = Number(input.reach);
   if (!Number.isInteger(reach) || reach < 0) throw new Error('Охват должен быть целым неотрицательным числом');
-  const publishedAt = String(input.publishedAt ?? '');
+  const publishedAt = typeof input.publishedAt === 'string' ? input.publishedAt : '';
   if (!/^\d{4}-\d{2}-\d{2}$/.test(publishedAt)) throw new Error('Укажите дату публикации');
   return {
     creatorId: integerId(input.creatorId, 'Креатор'),
     platformId: integerId(input.platformId, 'Площадка'),
-    url: String(input.url ?? '').trim(),
-    normalizedUrl: normalizeUrl(String(input.url ?? '')),
+    url: typeof input.url === 'string' ? input.url.trim() : '',
+    normalizedUrl: normalizeUrl(typeof input.url === 'string' ? input.url : ''),
     publishedAt,
     reach,
     status: validateVideoStatus(input.status ?? 'active'),

@@ -21,7 +21,7 @@ const actions: Record<string, (input: Record<string, unknown>) => Promise<number
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as Record<string, unknown>;
-    const action = String(body.action ?? '');
+    const action = typeof body.action === 'string' ? body.action : '';
     const handler = actions[action];
     if (!handler) return Response.json({ error: 'Неизвестное действие' }, { status: 400 });
     const id = await handler(body);

@@ -156,7 +156,7 @@ export function downloadGoogleSheetsReport(data: ReportExportData) {
   const link = document.createElement('a');
   link.href = href;
   link.download = `kontent-zavod-${new Date().toISOString().slice(0, 10)}.xlsx`;
-  document.body.append(link);
+  document.body.appendChild(link);
   link.click();
   link.remove();
   setTimeout(() => URL.revokeObjectURL(href), 2000);

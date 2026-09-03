@@ -167,7 +167,6 @@ export default function ContentFactoryApp() {
   const allCreatorRows = useMemo(() => buildCreatorRows(activeVideos, data.creators, true), [activeVideos, data.creators]);
   const matchingProducers = useMemo(() => data.producers.filter((producer) => !filters.producerId || producer.id === Number(filters.producerId)), [data.producers, filters.producerId]);
   const producerRows = useMemo(() => buildProducerRows(activeVideos, matchingProducers, view === 'producers'), [activeVideos, matchingProducers, view]);
-  const allProducerRows = useMemo(() => buildProducerRows(activeVideos, data.producers, true), [activeVideos, data.producers]);
 
   const activeFilterCount = [filters.type, filters.producerId, filters.creatorId, filters.platformId].filter(Boolean).length + (filters.from || filters.to ? 1 : 0);
   const selectedCreator = data.creators.find((creator) => creator.id === selectedCreatorId) ?? null;
@@ -256,7 +255,7 @@ export default function ContentFactoryApp() {
       <ProducerDetailDialog producer={selectedProducer} creators={data.creators} rows={allCreatorRows} videos={filteredRecords} onClose={() => setSelectedProducerId(null)} onEdit={openEditProducer} onCreator={(id) => { setSelectedProducerId(null); setSelectedCreatorId(id); }} />
       <ExportDialog open={exportOpen} onClose={() => setExportOpen(false)} onDownload={downloadReport} />
 
-      {toast && <div role="status" aria-live="polite" className="fixed bottom-24 right-4 z-[70] flex max-w-sm items-center gap-3 rounded-2xl bg-foreground px-4 py-3 text-sm font-semibold text-background shadow-2xl sm:bottom-6"><CheckCircle2 className="size-4 text-[var(--accent-strong)]" />{toast}</div>}
+      {toast && <output aria-live="polite" className="fixed bottom-24 right-4 z-[70] flex max-w-sm items-center gap-3 rounded-2xl bg-foreground px-4 py-3 text-sm font-semibold text-background shadow-2xl sm:bottom-6"><CheckCircle2 className="size-4 text-[var(--accent-strong)]" />{toast}</output>}
     </main>
   );
 }
