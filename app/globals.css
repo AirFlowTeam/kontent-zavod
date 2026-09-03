@@ -1,0 +1,99 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --font-sans: var(--font-interface);
+  --font-heading: var(--font-interface);
+  --radius-sm: calc(var(--radius) * 0.7);
+  --radius-md: calc(var(--radius) * 0.85);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.35);
+  --radius-2xl: calc(var(--radius) * 1.75);
+  --radius-3xl: calc(var(--radius) * 2.2);
+}
+
+:root {
+  --font-interface: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --background: oklch(0.975 0.012 92);
+  --foreground: oklch(0.19 0.025 273);
+  --card: oklch(0.998 0.003 92);
+  --card-foreground: oklch(0.19 0.025 273);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.19 0.025 273);
+  --primary: oklch(0.48 0.22 283);
+  --primary-foreground: oklch(0.99 0.005 100);
+  --secondary: oklch(0.935 0.025 283);
+  --secondary-foreground: oklch(0.31 0.12 283);
+  --muted: oklch(0.945 0.012 92);
+  --muted-foreground: oklch(0.49 0.025 273);
+  --accent: oklch(0.91 0.13 100);
+  --accent-foreground: oklch(0.24 0.05 90);
+  --destructive: oklch(0.58 0.22 27);
+  --border: oklch(0.88 0.017 92);
+  --input: oklch(0.88 0.017 92);
+  --ring: oklch(0.56 0.19 283);
+  --radius: 0.8rem;
+  --success: oklch(0.69 0.17 151);
+  --accent-strong: oklch(0.82 0.17 97);
+  --ugc-surface: oklch(0.39 0.18 284);
+  --ugc-foreground: oklch(0.99 0.005 100);
+  --ugc-soft: oklch(0.93 0.04 290);
+  --ugc-ink: oklch(0.42 0.17 284);
+  --ai-surface: oklch(0.87 0.15 99);
+  --ai-foreground: oklch(0.22 0.055 81);
+  --ai-soft: oklch(0.93 0.08 98);
+  --ai-ink: oklch(0.4 0.09 75);
+}
+
+.dark {
+  --background: oklch(0.16 0.022 273);
+  --foreground: oklch(0.96 0.01 92);
+  --card: oklch(0.21 0.025 273);
+  --card-foreground: oklch(0.96 0.01 92);
+  --popover: oklch(0.21 0.025 273);
+  --popover-foreground: oklch(0.96 0.01 92);
+  --primary: oklch(0.68 0.18 286);
+  --primary-foreground: oklch(0.15 0.02 273);
+  --secondary: oklch(0.28 0.04 276);
+  --secondary-foreground: oklch(0.94 0.015 92);
+  --muted: oklch(0.25 0.025 273);
+  --muted-foreground: oklch(0.7 0.02 92);
+  --accent: oklch(0.72 0.13 98);
+  --accent-foreground: oklch(0.17 0.035 80);
+  --destructive: oklch(0.68 0.19 24);
+  --border: oklch(1 0 0 / 12%);
+  --input: oklch(1 0 0 / 16%);
+  --ring: oklch(0.68 0.18 286);
+}
+
+@layer base {
+  * { @apply border-border outline-ring/50; }
+  html { @apply font-sans; }
+  body { @apply bg-background text-foreground; }
+  button, a { -webkit-tap-highlight-color: transparent; }
+}
+
+@layer utilities {
+  .metric-card { box-shadow: 0 1px 0 rgba(35, 31, 55, 0.03), 0 12px 30px rgba(60, 45, 18, 0.035); }
+}
