@@ -1,0 +1,45 @@
+[Unit]
+Description=Kontent Zavod worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=kontentzavod
+Group=kontentzavod
+WorkingDirectory=/opt/kontent-zavod/current
+Environment=NODE_ENV=production
+Environment=WRANGLER_SEND_METRICS=false
+Environment=WRANGLER_WRITE_LOGS=false
+Environment=WRANGLER_LOG_PATH=/var/lib/kontent-zavod/state/wrangler.log
+Environment=MINIFLARE_REGISTRY_PATH=/var/lib/kontent-zavod/state/registry
+Environment=XDG_CONFIG_HOME=/var/lib/kontent-zavod/state/config
+ExecStart=/opt/kontent-zavod-runtime/node/bin/node /opt/kontent-zavod/current/node_modules/wrangler/wrangler-dist/cli.js dev --config /opt/kontent-zavod/current/dist/server/wrangler.json --local --persist-to /var/lib/kontent-zavod/state --ip 127.0.0.1 --port 18082 --inspector-ip 127.0.0.1 --inspector-port 9230 --latest=false --log-level warn --show-interactive-dev-session=false
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=20
+KillSignal=SIGINT
+SuccessExitStatus=130
+UMask=0027
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+ReadWritePaths=/var/lib/kontent-zavod/state /opt/kontent-zavod/current
+
+MemoryHigh=768M
+MemoryMax=1024M
+TasksMax=96
+LimitNOFILE=8192
+
+[Install]
+WantedBy=multi-user.target
