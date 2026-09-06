@@ -17,15 +17,32 @@ if (!syncSecret) {
 }
 
 let stopping = false;
-process.on('SIGINT', () => {
+const stopController = new AbortController();
+
+function requestStop() {
+  if (stopping) return;
   stopping = true;
-});
-process.on('SIGTERM', () => {
-  stopping = true;
-});
+  stopController.abort();
+}
+
+process.on('SIGINT', requestStop);
+process.on('SIGTERM', requestStop);
+
+function requestSignal(timeoutMs) {
+  return AbortSignal.any([stopController.signal, AbortSignal.timeout(timeoutMs)]);
+}
 
 function wait(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  if (stopping) return Promise.resolve();
+  return new Promise((resolve) => {
+    const finish = () => {
+      clearTimeout(timer);
+      stopController.signal.removeEventListener('abort', finish);
+      resolve();
+    };
+    const timer = setTimeout(finish, ms);
+    stopController.signal.addEventListener('abort', finish, { once: true });
+  });
 }
 
 function compactError(value) {
@@ -43,7 +60,7 @@ async function syncRequest(body) {
       'x-sync-secret': syncSecret,
     },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(30_000),
+    signal: requestSignal(30_000),
   });
 
   const payload = await response.json().catch(() => ({}));
@@ -85,10 +102,24 @@ function executeYtDlp(url, { metadataOnly = false } = {}) {
     });
     let stdout = '';
     let stderr = '';
+    let timedOut = false;
+    let stoppingChild = false;
+    let forceKillTimer;
     const timer = setTimeout(() => {
+      timedOut = true;
       child.kill('SIGKILL');
-      reject(new Error(`Парсер не ответил за ${Math.round(commandTimeoutMs / 1_000)} сек.`));
     }, commandTimeoutMs);
+    const stopChild = () => {
+      stoppingChild = true;
+      child.kill('SIGTERM');
+      forceKillTimer = setTimeout(() => child.kill('SIGKILL'), 5_000);
+    };
+    const cleanup = () => {
+      clearTimeout(timer);
+      clearTimeout(forceKillTimer);
+      stopController.signal.removeEventListener('abort', stopChild);
+    };
+    stopController.signal.addEventListener('abort', stopChild, { once: true });
 
     child.stdout.on('data', (chunk) => {
       stdout += chunk;
@@ -99,11 +130,19 @@ function executeYtDlp(url, { metadataOnly = false } = {}) {
       if (stderr.length > 1_000_000) stderr = stderr.slice(-1_000_000);
     });
     child.once('error', (error) => {
-      clearTimeout(timer);
+      cleanup();
       reject(error);
     });
     child.once('close', (code) => {
-      clearTimeout(timer);
+      cleanup();
+      if (stoppingChild) {
+        reject(new Error('Сборщик остановлен'));
+        return;
+      }
+      if (timedOut) {
+        reject(new Error(`Парсер не ответил за ${Math.round(commandTimeoutMs / 1_000)} сек.`));
+        return;
+      }
       if (code !== 0 || !stdout.trim()) {
         reject(new Error(compactError(stderr) || `yt-dlp exited with ${code}`));
         return;
@@ -132,7 +171,7 @@ async function fetchJson(url, init = {}) {
       'user-agent': 'KontentZavod/1.0 (+channel metrics collector)',
       ...init.headers,
     },
-    signal: AbortSignal.timeout(30_000),
+    signal: requestSignal(30_000),
   });
   if (!response.ok) throw new Error(`Provider returned HTTP ${response.status}`);
   return response.json();
@@ -152,7 +191,7 @@ async function parseYouTubeWithApi(channel) {
     const redirected = await fetch(channel.url, {
       method: 'HEAD',
       redirect: 'follow',
-      signal: AbortSignal.timeout(20_000),
+      signal: requestSignal(20_000),
     });
     const redirectedParts = new URL(redirected.url).pathname.split('/').filter(Boolean);
     if (redirectedParts[0]?.startsWith('@')) filter = ['forHandle', redirectedParts[0]];
@@ -309,6 +348,7 @@ async function processChannel(channel) {
     });
     console.log(`${new Date().toISOString()} synced #${channel.id} ${channel.platformName}`);
   } catch (error) {
+    if (stopping) return;
     const message = compactError(error instanceof Error ? error.message : error);
     await syncRequest({
       action: 'fail',
@@ -336,7 +376,9 @@ async function run() {
         continue;
       }
     } catch (error) {
-      console.error(`${new Date().toISOString()} queue error: ${compactError(error)}`);
+      if (!stopping) {
+        console.error(`${new Date().toISOString()} queue error: ${compactError(error)}`);
+      }
     }
     await wait(pollIntervalMs);
   }
