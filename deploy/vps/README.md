@@ -10,7 +10,8 @@ the host Nginx instance.
 - Persistent local D1 state: `/var/lib/kontent-zavod/state`
 - Service: `kontent-zavod.service`
 - Always-on channel collector: `kontent-zavod-sync.service` (no cron)
-- Collector credentials: `/etc/kontent-zavod/sync.env` (`0600`, never committed)
+- Collector credentials: `/etc/kontent-zavod/sync.env` (`0640`, owned by
+  `root:kontentzavod`, never committed)
 
 The Worker must run as a single process because its D1 binding is backed by
 local Miniflare state. Keep the state directory outside release folders and do
