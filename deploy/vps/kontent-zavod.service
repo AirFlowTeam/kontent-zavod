@@ -15,7 +15,7 @@ Environment=WRANGLER_LOG_PATH=/var/lib/kontent-zavod/state/wrangler.log
 Environment=MINIFLARE_REGISTRY_PATH=/var/lib/kontent-zavod/state/registry
 Environment=XDG_CONFIG_HOME=/var/lib/kontent-zavod/state/config
 EnvironmentFile=/etc/kontent-zavod/sync.env
-ExecStart=/opt/kontent-zavod-runtime/node/bin/node /opt/kontent-zavod/current/node_modules/wrangler/wrangler-dist/cli.js dev --config /opt/kontent-zavod/current/dist/server/wrangler.json --local --persist-to /var/lib/kontent-zavod/state --ip 127.0.0.1 --port 18082 --inspector-ip 127.0.0.1 --inspector-port 9230 --latest=false --log-level warn --show-interactive-dev-session=false --var SYNC_SECRET:${SYNC_SECRET}
+ExecStart=/opt/kontent-zavod-runtime/node/bin/node /opt/kontent-zavod/current/node_modules/wrangler/wrangler-dist/cli.js dev --config /opt/kontent-zavod/current/dist/server/wrangler.json --local --persist-to /var/lib/kontent-zavod/state --ip 127.0.0.1 --port 18082 --inspector-ip 127.0.0.1 --inspector-port 9230 --latest=false --log-level warn --show-interactive-dev-session=false --env-file /etc/kontent-zavod/sync.env
 Restart=on-failure
 RestartSec=3
 TimeoutStopSec=20
