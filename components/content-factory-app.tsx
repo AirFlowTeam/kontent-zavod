@@ -1,85 +1,128 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Bot,
   CheckCircle2,
   CircleUserRound,
-  Clapperboard,
   FileSpreadsheet,
   Filter,
   LayoutDashboard,
+  Link2,
   Menu,
   Plus,
   RefreshCw,
   RotateCcw,
   Sparkles,
-  UserRoundPlus,
   UsersRound,
 } from 'lucide-react';
 
 import {
+  ChannelCorrectionDialog,
+  ChannelDetailDialog,
+  ChannelDialog,
   CreatorDetailDialog,
   CreatorDialog,
   ExportDialog,
   ProducerDetailDialog,
   ProducerDialog,
-  VideoDialog,
 } from '@/components/content-dialogs';
 import {
+  ChannelsSection,
   CreatorTypeSection,
   DashboardSection,
+  MetricCards,
   ProducersSection,
-  VideosSection,
 } from '@/components/content-sections';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import {
+  NativeSelect,
+  NativeSelectOption,
+} from '@/components/ui/native-select';
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
 import {
   buildCreatorRows,
   buildProducerRows,
-  currentMonthRange,
+  getFreshness,
   makeMetrics,
-  periodLabel,
 } from '@/lib/content-metrics';
-import type { Creator, CreatorType, DashboardData, Producer, Video } from '@/lib/content-types';
+import type {
+  Channel,
+  ChannelSyncStatus,
+  Creator,
+  CreatorType,
+  DashboardData,
+  Producer,
+  RecordStatus,
+} from '@/lib/content-types';
 import { downloadGoogleSheetsReport } from '@/lib/xlsx-export';
 
-type View = 'dashboard' | 'ugc' | 'ai' | 'videos' | 'producers';
+type View = 'dashboard' | 'ugc' | 'ai' | 'channels' | 'producers';
+type FilterStatus = '' | RecordStatus | ChannelSyncStatus;
 type Filters = {
-  from: string;
-  to: string;
   type: '' | CreatorType;
   producerId: string;
   creatorId: string;
   platformId: string;
+  status: FilterStatus;
 };
 
-const emptyData: DashboardData = { producers: [], creators: [], platforms: [], videos: [] };
+const emptyData: DashboardData = {
+  producers: [],
+  creators: [],
+  platforms: [],
+  channels: [],
+};
 
 const navigation = [
   { id: 'dashboard' as const, label: 'Главная', icon: LayoutDashboard },
   { id: 'ugc' as const, label: 'UGC-креаторы', icon: CircleUserRound },
   { id: 'ai' as const, label: 'AI-креаторы', icon: Bot },
-  { id: 'videos' as const, label: 'Все ролики', icon: Clapperboard },
+  { id: 'channels' as const, label: 'Каналы', icon: Link2 },
   { id: 'producers' as const, label: 'Продюсеры', icon: UsersRound },
 ];
 
 const viewCopy: Record<View, { title: string; description: string }> = {
-  dashboard: { title: 'Обзор', description: 'Все публикации, охваты и вклад команды — в одном рабочем окне.' },
-  ugc: { title: 'UGC-креаторы', description: 'Результаты людей, которые создают пользовательский контент.' },
-  ai: { title: 'AI-креаторы', description: 'Публикации и охваты креаторов с AI-производством.' },
-  videos: { title: 'Все ролики', description: 'Единый реестр публикаций, ссылок и текущих охватов.' },
-  producers: { title: 'Продюсеры', description: 'Ответственные, их креаторы и суммарный результат.' },
+  dashboard: {
+    title: 'Обзор',
+    description: 'Аудитория, охваты и состояние всех подключённых каналов.',
+  },
+  ugc: {
+    title: 'UGC-креаторы',
+    description: 'Каналы и агрегированные показатели UGC-креаторов.',
+  },
+  ai: {
+    title: 'AI-креаторы',
+    description: 'Каналы и агрегированные показатели AI-креаторов.',
+  },
+  channels: {
+    title: 'Каналы',
+    description:
+      'Единый реестр источников, автосинхронизация и свежесть данных.',
+  },
+  producers: {
+    title: 'Продюсеры',
+    description: 'Ответственные и результат каналов закреплённых креаторов.',
+  },
 };
 
 function defaultFilters(): Filters {
-  const range = currentMonthRange();
-  return { from: range.from, to: range.to, type: '', producerId: '', creatorId: '', platformId: '' };
+  return {
+    type: '',
+    producerId: '',
+    creatorId: '',
+    platformId: '',
+    status: 'active',
+  };
 }
 
 export default function ContentFactoryApp() {
@@ -92,15 +135,24 @@ export default function ContentFactoryApp() {
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const [toast, setToast] = useState('');
 
-  const [videoOpen, setVideoOpen] = useState(false);
-  const [editingVideo, setEditingVideo] = useState<Video | null>(null);
-  const [creatorOpen, setCreatorOpen] = useState(false);
+  const [channelOpen, setChannelOpen] = useState(false);
+  const [correctingChannelId, setCorrectingChannelId] = useState<number | null>(
+    null,
+  );
   const [editingCreator, setEditingCreator] = useState<Creator | null>(null);
-  const [producerOpen, setProducerOpen] = useState(false);
   const [editingProducer, setEditingProducer] = useState<Producer | null>(null);
-  const [selectedCreatorId, setSelectedCreatorId] = useState<number | null>(null);
-  const [selectedProducerId, setSelectedProducerId] = useState<number | null>(null);
+  const [selectedChannelId, setSelectedChannelId] = useState<number | null>(
+    null,
+  );
+  const [selectedCreatorId, setSelectedCreatorId] = useState<number | null>(
+    null,
+  );
+  const [selectedProducerId, setSelectedProducerId] = useState<number | null>(
+    null,
+  );
   const [exportOpen, setExportOpen] = useState(false);
+  const loadInFlightRef = useRef<Promise<void> | null>(null);
+  const hasLoadedDataRef = useRef(false);
   const actionsDisabled = loading || Boolean(error);
 
   const notify = useCallback((message: string) => {
@@ -108,82 +160,247 @@ export default function ContentFactoryApp() {
     window.setTimeout(() => setToast(''), 3600);
   }, []);
 
-  const loadData = useCallback(async (showLoader = true) => {
-    if (showLoader) setLoading(true);
-    setError('');
+  const loadData = useCallback(async function refresh(
+    showLoader = true,
+    refreshAfterCurrent = false,
+  ) {
+    const activeRequest = loadInFlightRef.current;
+    if (activeRequest) {
+      await activeRequest;
+      if (refreshAfterCurrent) await refresh(showLoader, false);
+      return;
+    }
+
+    if (showLoader) {
+      setLoading(true);
+      setError('');
+    }
+    const request = (async () => {
+      try {
+        const response = await fetch('/api/data', { cache: 'no-store' });
+        const payload = (await response.json()) as DashboardData & {
+          error?: string;
+        };
+        if (!response.ok)
+          throw new Error(payload.error || 'Не удалось загрузить данные');
+        setData({ ...payload, channels: payload.channels ?? [] });
+        hasLoadedDataRef.current = true;
+        setError('');
+      } catch (caught) {
+        if (showLoader || !hasLoadedDataRef.current) {
+          setError(
+            caught instanceof Error
+              ? caught.message
+              : 'Не удалось загрузить данные',
+          );
+        }
+      } finally {
+        if (showLoader) setLoading(false);
+      }
+    })();
+
+    loadInFlightRef.current = request;
     try {
-      const response = await fetch('/api/data', { cache: 'no-store' });
-      const payload = await response.json() as DashboardData & { error?: string };
-      if (!response.ok) throw new Error(payload.error || 'Не удалось загрузить данные');
-      setData(payload);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Не удалось загрузить данные');
+      await request;
     } finally {
-      if (showLoader) setLoading(false);
+      if (loadInFlightRef.current === request) loadInFlightRef.current = null;
     }
   }, []);
 
-  useEffect(() => { void loadData(); }, [loadData]);
-
-  const mutate = useCallback(async (payload: Record<string, unknown>) => {
-    const response = await fetch('/api/manage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-    const result = await response.json() as { error?: string };
-    if (!response.ok) throw new Error(result.error || 'Не удалось сохранить изменения');
-    await loadData(false);
-    const labels: Record<string, string> = {
-      createVideo: 'Ролик добавлен, показатели пересчитаны', updateVideo: 'Ролик обновлён, показатели пересчитаны',
-      createCreator: 'Креатор добавлен', updateCreator: 'Карточка креатора обновлена',
-      createProducer: 'Продюсер добавлен', updateProducer: 'Карточка продюсера обновлена',
+  useEffect(() => {
+    void loadData();
+    const refresh = () => void loadData(false);
+    const intervalId = window.setInterval(refresh, 60_000);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') refresh();
     };
-    notify(labels[String(payload.action)] ?? 'Изменения сохранены');
-  }, [loadData, notify]);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [loadData]);
 
-  const forcedType: '' | CreatorType = view === 'ugc' ? 'UGC' : view === 'ai' ? 'AI' : '';
+  const mutate = useCallback(
+    async (payload: Record<string, unknown>) => {
+      const response = await fetch('/api/manage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const result = (await response.json()) as { error?: string };
+      if (!response.ok)
+        throw new Error(result.error || 'Не удалось сохранить изменения');
+      await loadData(false, true);
+      const labels: Record<string, string> = {
+        createChannel: 'Канал подключён и поставлен на синхронизацию',
+        updateChannel: 'Корректировка канала сохранена',
+        updateCreator: 'Профиль креатора обновлён',
+        updateProducer: 'Карточка продюсера обновлена',
+      };
+      notify(labels[String(payload.action)] ?? 'Изменения сохранены');
+    },
+    [loadData, notify],
+  );
 
-  const filteredRecords = useMemo(() => data.videos.filter((video) => {
-    const selectedType = forcedType || filters.type;
-    if (filters.from && video.publishedAt < filters.from) return false;
-    if (filters.to && video.publishedAt > filters.to) return false;
-    if (selectedType && video.creatorType !== selectedType) return false;
-    if (filters.producerId && video.producerId !== Number(filters.producerId)) return false;
-    if (filters.creatorId && video.creatorId !== Number(filters.creatorId)) return false;
-    if (filters.platformId && video.platformId !== Number(filters.platformId)) return false;
-    return true;
-  }), [data.videos, filters, forcedType]);
+  const forcedType: '' | CreatorType =
+    view === 'ugc' ? 'UGC' : view === 'ai' ? 'AI' : '';
 
-  const activeVideos = useMemo(() => filteredRecords.filter((video) => video.status === 'active'), [filteredRecords]);
-  const metrics = useMemo(() => makeMetrics(activeVideos), [activeVideos]);
-  const ugcMetrics = useMemo(() => makeMetrics(activeVideos.filter((video) => video.creatorType === 'UGC')), [activeVideos]);
-  const aiMetrics = useMemo(() => makeMetrics(activeVideos.filter((video) => video.creatorType === 'AI')), [activeVideos]);
+  const filteredChannels = useMemo(
+    () =>
+      data.channels.filter((channel) => {
+        const selectedType = forcedType || filters.type;
+        if (selectedType && channel.creatorType !== selectedType) return false;
+        if (
+          filters.producerId &&
+          channel.producerId !== Number(filters.producerId)
+        )
+          return false;
+        if (
+          filters.creatorId &&
+          channel.creatorId !== Number(filters.creatorId)
+        )
+          return false;
+        if (
+          filters.platformId &&
+          channel.platformId !== Number(filters.platformId)
+        )
+          return false;
+        if (filters.status === 'active' || filters.status === 'inactive')
+          return channel.status === filters.status;
+        if (filters.status && channel.lastSyncStatus !== filters.status)
+          return false;
+        return true;
+      }),
+    [data.channels, filters, forcedType],
+  );
 
-  const matchingCreators = useMemo(() => data.creators.filter((creator) => {
-    const selectedType = forcedType || filters.type;
-    if (selectedType && creator.type !== selectedType) return false;
-    if (filters.producerId && creator.producerId !== Number(filters.producerId)) return false;
-    if (filters.creatorId && creator.id !== Number(filters.creatorId)) return false;
-    return true;
-  }), [data.creators, filters.creatorId, filters.producerId, filters.type, forcedType]);
+  const metrics = useMemo(
+    () => makeMetrics(filteredChannels),
+    [filteredChannels],
+  );
+  const ugcMetrics = useMemo(
+    () =>
+      makeMetrics(
+        filteredChannels.filter((channel) => channel.creatorType === 'UGC'),
+      ),
+    [filteredChannels],
+  );
+  const aiMetrics = useMemo(
+    () =>
+      makeMetrics(
+        filteredChannels.filter((channel) => channel.creatorType === 'AI'),
+      ),
+    [filteredChannels],
+  );
 
-  const creatorRows = useMemo(() => buildCreatorRows(activeVideos, matchingCreators, view === 'ugc' || view === 'ai'), [activeVideos, matchingCreators, view]);
-  const allCreatorRows = useMemo(() => buildCreatorRows(activeVideos, data.creators, true), [activeVideos, data.creators]);
-  const matchingProducers = useMemo(() => data.producers.filter((producer) => !filters.producerId || producer.id === Number(filters.producerId)), [data.producers, filters.producerId]);
-  const producerRows = useMemo(() => buildProducerRows(activeVideos, matchingProducers, view === 'producers'), [activeVideos, matchingProducers, view]);
+  const matchingCreators = useMemo(
+    () =>
+      data.creators.filter((creator) => {
+        const selectedType = forcedType || filters.type;
+        if (selectedType && creator.type !== selectedType) return false;
+        if (
+          filters.producerId &&
+          creator.producerId !== Number(filters.producerId)
+        )
+          return false;
+        if (filters.creatorId && creator.id !== Number(filters.creatorId))
+          return false;
+        return true;
+      }),
+    [
+      data.creators,
+      filters.creatorId,
+      filters.producerId,
+      filters.type,
+      forcedType,
+    ],
+  );
 
-  const activeFilterCount = [filters.type, filters.producerId, filters.creatorId, filters.platformId].filter(Boolean).length + (filters.from || filters.to ? 1 : 0);
-  const selectedCreator = data.creators.find((creator) => creator.id === selectedCreatorId) ?? null;
-  const selectedProducer = data.producers.find((producer) => producer.id === selectedProducerId) ?? null;
+  const creatorRows = useMemo(
+    () => buildCreatorRows(filteredChannels, matchingCreators),
+    [filteredChannels, matchingCreators],
+  );
+  const allCreatorRows = useMemo(
+    () => buildCreatorRows(filteredChannels, data.creators, true),
+    [data.creators, filteredChannels],
+  );
+  const matchingProducers = useMemo(
+    () =>
+      data.producers.filter(
+        (producer) =>
+          !filters.producerId || producer.id === Number(filters.producerId),
+      ),
+    [data.producers, filters.producerId],
+  );
+  const producerRows = useMemo(
+    () =>
+      buildProducerRows(
+        filteredChannels,
+        matchingProducers,
+        view === 'producers',
+      ),
+    [filteredChannels, matchingProducers, view],
+  );
+
+  const activeFilterCount = [
+    filters.type,
+    filters.producerId,
+    filters.creatorId,
+    filters.platformId,
+    filters.status === 'active' ? '' : filters.status,
+  ].filter(Boolean).length;
+  const selectedChannel =
+    data.channels.find((channel) => channel.id === selectedChannelId) ?? null;
+  const correctingChannel =
+    data.channels.find((channel) => channel.id === correctingChannelId) ?? null;
+  const selectedCreator =
+    data.creators.find((creator) => creator.id === selectedCreatorId) ?? null;
+  const selectedProducer =
+    data.producers.find((producer) => producer.id === selectedProducerId) ??
+    null;
+  const syncHealth = useMemo(
+    () => ({
+      fresh: filteredChannels.filter(
+        (channel) => getFreshness(channel.lastSyncAt) === 'fresh',
+      ).length,
+      aging: filteredChannels.filter(
+        (channel) => getFreshness(channel.lastSyncAt) === 'aging',
+      ).length,
+      stale: filteredChannels.filter(
+        (channel) => getFreshness(channel.lastSyncAt) === 'stale',
+      ).length,
+      noData: filteredChannels.filter(
+        (channel) => getFreshness(channel.lastSyncAt) === 'never',
+      ).length,
+      updating: filteredChannels.filter(
+        (channel) =>
+          channel.lastSyncStatus === 'pending' ||
+          channel.lastSyncStatus === 'syncing',
+      ).length,
+      error: filteredChannels.filter(
+        (channel) => channel.lastSyncStatus === 'error',
+      ).length,
+      needsAuth: filteredChannels.filter(
+        (channel) => channel.lastSyncStatus === 'needs_auth',
+      ).length,
+    }),
+    [filteredChannels],
+  );
 
   function setFilter<K extends keyof Filters>(key: K, value: Filters[K]) {
     setFilters((current) => {
       const next = { ...current, [key]: value };
-      if (key === 'from' && value && next.to && value > next.to) next.to = String(value);
-      if (key === 'to' && value && next.from && value < next.from) next.from = String(value);
       if (key === 'producerId' && current.creatorId) {
-        const creator = data.creators.find((item) => item.id === Number(current.creatorId));
+        const creator = data.creators.find(
+          (item) => item.id === Number(current.creatorId),
+        );
         if (value && creator?.producerId !== Number(value)) next.creatorId = '';
       }
       if (key === 'type' && current.creatorId) {
-        const creator = data.creators.find((item) => item.id === Number(current.creatorId));
+        const creator = data.creators.find(
+          (item) => item.id === Number(current.creatorId),
+        );
         if (value && creator?.type !== value) next.creatorId = '';
       }
       return next;
@@ -196,36 +413,115 @@ export default function ContentFactoryApp() {
     if (next === 'ugc' || next === 'ai') {
       const nextType: CreatorType = next === 'ugc' ? 'UGC' : 'AI';
       setFilters((current) => {
-        const creator = data.creators.find((item) => item.id === Number(current.creatorId));
-        return { ...current, type: '', creatorId: creator && creator.type !== nextType ? '' : current.creatorId };
+        const creator = data.creators.find(
+          (item) => item.id === Number(current.creatorId),
+        );
+        return {
+          ...current,
+          type: '',
+          creatorId:
+            creator && creator.type !== nextType ? '' : current.creatorId,
+        };
       });
     }
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
-  function openAddVideo() { if (actionsDisabled) return; setEditingVideo(null); setVideoOpen(true); }
-  function openEditVideo(video: Video) { setSelectedCreatorId(null); setEditingVideo(video); setVideoOpen(true); }
-  function openAddCreator() { if (actionsDisabled) return; setEditingCreator(null); setCreatorOpen(true); }
-  function openEditCreator(creator: Creator) { setSelectedCreatorId(null); setEditingCreator(creator); setCreatorOpen(true); }
-  function openAddProducer() { if (actionsDisabled) return; setEditingProducer(null); setProducerOpen(true); }
-  function openEditProducer(producer: Producer) { setSelectedProducerId(null); setEditingProducer(producer); setProducerOpen(true); }
+  function openAddChannel() {
+    if (!actionsDisabled) setChannelOpen(true);
+  }
+  function openChannel(channel: Channel) {
+    setSelectedCreatorId(null);
+    setSelectedChannelId(channel.id);
+  }
+  function openCorrectChannel(channel: Channel) {
+    setSelectedChannelId(null);
+    setSelectedCreatorId(null);
+    setCorrectingChannelId(channel.id);
+  }
+  function openEditCreator(creator: Creator) {
+    setSelectedCreatorId(null);
+    setEditingCreator(creator);
+  }
+  function openEditProducer(producer: Producer) {
+    setSelectedProducerId(null);
+    setEditingProducer(producer);
+  }
 
-  const exportData = useMemo(() => ({
-    period: periodLabel(filters.from, filters.to), metrics, ugc: ugcMetrics, ai: aiMetrics,
-    videos: filteredRecords, creatorRows: buildCreatorRows(activeVideos, data.creators), producerRows: buildProducerRows(activeVideos, data.producers),
-  }), [activeVideos, aiMetrics, data.creators, data.producers, filteredRecords, filters.from, filters.to, metrics, ugcMetrics]);
+  const exportData = useMemo(
+    () => ({
+      metrics,
+      ugc: ugcMetrics,
+      ai: aiMetrics,
+      channels: filteredChannels,
+      creatorRows: buildCreatorRows(filteredChannels, data.creators),
+      producerRows: buildProducerRows(filteredChannels, data.producers),
+    }),
+    [
+      aiMetrics,
+      data.creators,
+      data.producers,
+      filteredChannels,
+      metrics,
+      ugcMetrics,
+    ],
+  );
 
-  function downloadReport() { downloadGoogleSheetsReport(exportData); notify('Отчёт скачан — его можно импортировать в Google Таблицы'); }
-  function beginExport() { if (!actionsDisabled) { downloadReport(); setExportOpen(true); } }
+  function downloadReport() {
+    downloadGoogleSheetsReport(exportData);
+    notify(
+      'Отчёт по каналам скачан — его можно импортировать в Google Таблицы',
+    );
+  }
+  function beginExport() {
+    if (!actionsDisabled) {
+      downloadReport();
+      setExportOpen(true);
+    }
+  }
 
-  const content = loading ? <LoadingState /> : error ? <ErrorState message={error} onRetry={() => void loadData()} /> : view === 'dashboard' ? (
-    <DashboardSection metrics={metrics} ugc={ugcMetrics} ai={aiMetrics} creatorRows={creatorRows} producerRows={producerRows} typeFilter={filters.type} onViewType={(type) => changeView(type === 'UGC' ? 'ugc' : 'ai')} onCreator={setSelectedCreatorId} onProducer={setSelectedProducerId} />
+  const content = loading ? (
+    <LoadingState />
+  ) : error ? (
+    <ErrorState message={error} onRetry={() => void loadData()} />
+  ) : view === 'dashboard' ? (
+    <DashboardSection
+      metrics={metrics}
+      ugc={ugcMetrics}
+      ai={aiMetrics}
+      creatorRows={creatorRows}
+      producerRows={producerRows}
+      typeFilter={filters.type}
+      onViewType={(type) => changeView(type === 'UGC' ? 'ugc' : 'ai')}
+      onCreator={setSelectedCreatorId}
+      onProducer={setSelectedProducerId}
+    />
   ) : view === 'ugc' || view === 'ai' ? (
-    <CreatorTypeSection type={view === 'ugc' ? 'UGC' : 'AI'} metrics={metrics} rows={creatorRows} onCreator={setSelectedCreatorId} />
-  ) : view === 'videos' ? (
-    <VideosSection videos={filteredRecords} activeMetrics={metrics} onEdit={openEditVideo} onAdd={openAddVideo} />
+    <CreatorTypeSection
+      type={view === 'ugc' ? 'UGC' : 'AI'}
+      metrics={metrics}
+      rows={creatorRows}
+      onCreator={setSelectedCreatorId}
+    />
+  ) : view === 'channels' ? (
+    <ChannelsSection
+      channels={filteredChannels}
+      metrics={metrics}
+      onChannel={openChannel}
+      onCorrect={openCorrectChannel}
+      onAdd={openAddChannel}
+    />
   ) : (
-    <ProducersSection producers={matchingProducers} creators={data.creators} rows={producerRows} onProducer={setSelectedProducerId} onEdit={openEditProducer} onAdd={openAddProducer} />
+    <div className="space-y-5">
+      <MetricCards metrics={metrics} />
+      <ProducersSection
+        producers={matchingProducers}
+        creators={data.creators}
+        rows={producerRows}
+        onProducer={setSelectedProducerId}
+        onEdit={openEditProducer}
+      />
+    </div>
   );
 
   return (
@@ -233,69 +529,565 @@ export default function ContentFactoryApp() {
       <header className="sticky top-0 z-30 border-b border-border/75 bg-background/90 backdrop-blur-xl">
         <div className="mx-auto flex h-16 max-w-[1540px] items-center justify-between px-4 sm:px-6 lg:px-8">
           <div className="flex items-center gap-3">
-            <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setMobileMenuOpen(true)} aria-label="Открыть меню"><Menu /></Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="lg:hidden"
+              onClick={() => setMobileMenuOpen(true)}
+              aria-label="Открыть меню"
+            >
+              <Menu />
+            </Button>
             <Brand />
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="outline" className="hidden h-10 sm:inline-flex" onClick={beginExport} disabled={actionsDisabled}><FileSpreadsheet data-icon="inline-start" /> Выгрузить в Google Таблицы</Button>
-            <Button className="h-10 px-3.5 shadow-sm" onClick={openAddVideo} disabled={actionsDisabled}><Plus data-icon="inline-start" /><span className="hidden sm:inline">Добавить ролик</span><span className="sm:hidden">Ролик</span></Button>
+            <Button
+              variant="outline"
+              className="hidden h-10 sm:inline-flex"
+              onClick={beginExport}
+              disabled={actionsDisabled}
+            >
+              <FileSpreadsheet data-icon="inline-start" /> Выгрузить в Google
+              Таблицы
+            </Button>
+            <Button
+              className="h-10 px-3.5 shadow-sm"
+              onClick={openAddChannel}
+              disabled={actionsDisabled}
+            >
+              <Plus data-icon="inline-start" />
+              <span className="hidden sm:inline">Добавить канал</span>
+              <span className="sm:hidden">Канал</span>
+            </Button>
           </div>
         </div>
       </header>
-
       <div className="mx-auto grid max-w-[1540px] lg:grid-cols-[230px_minmax(0,1fr)]">
-        <Sidebar view={view} onView={changeView} onAddCreator={openAddCreator} onAddProducer={openAddProducer} actionsDisabled={actionsDisabled} />
+        <Sidebar view={view} onView={changeView} />
         <section className="min-w-0 px-4 pb-24 pt-6 sm:px-6 lg:px-8 lg:pb-12 lg:pt-8">
           <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-            <div><Badge variant="outline" className="mb-3 border-primary/20 bg-primary/5 text-primary">{periodLabel(filters.from, filters.to)}</Badge><h1 className="text-3xl font-extrabold tracking-[-0.045em] sm:text-[2.25rem]">{viewCopy[view].title}</h1><p className="mt-2 max-w-xl text-sm text-muted-foreground">{viewCopy[view].description}</p></div>
-            <Button variant="outline" className="self-start lg:hidden" onClick={() => setMobileFiltersOpen(true)}><Filter data-icon="inline-start" /> Фильтры · {activeFilterCount}</Button>
+            <div>
+              <div className="mb-3 flex flex-wrap gap-2">
+                {loading ? (
+                  <Badge variant="outline" className="text-muted-foreground">
+                    Загружаем каналы…
+                  </Badge>
+                ) : error ? (
+                  <Badge variant="destructive">Данные недоступны</Badge>
+                ) : (
+                  <>
+                    <Badge
+                      variant="outline"
+                      className="border-primary/20 bg-primary/5 text-primary"
+                    >
+                      {metrics.channelCount
+                        ? `${metrics.channelCount} каналов`
+                        : 'Каналы не подключены'}
+                    </Badge>
+                    {syncHealth.fresh > 0 && (
+                      <Badge
+                        variant="outline"
+                        className="border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                      >
+                        {syncHealth.fresh} свежих
+                      </Badge>
+                    )}
+                    {syncHealth.stale > 0 && (
+                      <Badge
+                        variant="outline"
+                        className="border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                      >
+                        {syncHealth.stale} устарели
+                      </Badge>
+                    )}
+                    {syncHealth.aging > 0 && (
+                      <Badge
+                        variant="outline"
+                        className="border-sky-500/25 bg-sky-500/10 text-sky-700 dark:text-sky-300"
+                      >
+                        {syncHealth.aging} обновлялись недавно
+                      </Badge>
+                    )}
+                    {syncHealth.noData > 0 && syncHealth.updating === 0 && (
+                      <Badge
+                        variant="outline"
+                        className="text-muted-foreground"
+                      >
+                        {syncHealth.noData} без данных
+                      </Badge>
+                    )}
+                    {syncHealth.updating > 0 && (
+                      <Badge
+                        variant="outline"
+                        className="border-sky-500/25 bg-sky-500/10 text-sky-700 dark:text-sky-300"
+                      >
+                        {syncHealth.updating} обновляются
+                      </Badge>
+                    )}
+                    {syncHealth.error > 0 && (
+                      <Badge
+                        variant="outline"
+                        className="border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                      >
+                        {syncHealth.error} с ошибкой
+                      </Badge>
+                    )}
+                    {syncHealth.needsAuth > 0 && (
+                      <Badge
+                        variant="outline"
+                        className="border-rose-500/25 bg-rose-500/10 text-rose-700 dark:text-rose-300"
+                      >
+                        {syncHealth.needsAuth} нужен доступ
+                      </Badge>
+                    )}
+                  </>
+                )}
+              </div>
+              <h1 className="text-3xl font-extrabold tracking-[-0.045em] sm:text-[2.25rem]">
+                {viewCopy[view].title}
+              </h1>
+              <p className="mt-2 max-w-xl text-sm text-muted-foreground">
+                {viewCopy[view].description}
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              className="self-start lg:hidden"
+              onClick={() => setMobileFiltersOpen(true)}
+              disabled={actionsDisabled}
+            >
+              <Filter data-icon="inline-start" /> Фильтры · {activeFilterCount}
+            </Button>
           </div>
-
-          <div className="mt-6 hidden lg:block"><FilterBar filters={filters} setFilter={setFilter} data={data} forcedType={forcedType} onReset={() => setFilters(defaultFilters())} resultCount={metrics.videoCount} /></div>
+          {!loading && !error && (
+            <div className="mt-6 hidden lg:block">
+              <FilterBar
+                filters={filters}
+                setFilter={setFilter}
+                data={data}
+                forcedType={forcedType}
+                onReset={() => setFilters(defaultFilters())}
+                resultCount={metrics.channelCount}
+              />
+            </div>
+          )}
           <div className="mt-6">{content}</div>
         </section>
       </div>
-
-      <div className="fixed inset-x-4 bottom-4 z-20 grid grid-cols-[1fr_auto] gap-2 rounded-2xl border border-border bg-card/95 p-2 shadow-[0_18px_55px_rgba(35,31,55,.18)] backdrop-blur-xl sm:hidden"><Button variant="outline" onClick={beginExport} disabled={actionsDisabled}><FileSpreadsheet data-icon="inline-start" /> Экспорт</Button><Button onClick={openAddVideo} disabled={actionsDisabled}><Plus data-icon="inline-start" /> Добавить ролик</Button></div>
-
-      <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}><SheetContent side="left" className="w-[310px]"><SheetHeader><Brand /><SheetTitle className="sr-only">Навигация</SheetTitle><SheetDescription className="sr-only">Разделы сервиса</SheetDescription></SheetHeader><nav className="space-y-1 px-3">{navigation.map((item) => <button key={item.id} onClick={() => changeView(item.id)} className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-semibold ${view === item.id ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}><item.icon className="size-4" />{item.label}</button>)}</nav><div className="mt-auto space-y-2 border-t border-border p-4"><Button variant="outline" className="w-full justify-start" disabled={actionsDisabled} onClick={() => { setMobileMenuOpen(false); openAddCreator(); }}><UserRoundPlus data-icon="inline-start" /> Добавить креатора</Button><Button variant="outline" className="w-full justify-start" disabled={actionsDisabled} onClick={() => { setMobileMenuOpen(false); openAddProducer(); }}><UsersRound data-icon="inline-start" /> Добавить продюсера</Button></div></SheetContent></Sheet>
-      <Sheet open={mobileFiltersOpen} onOpenChange={setMobileFiltersOpen}><SheetContent side="bottom" className="max-h-[90vh] overflow-y-auto rounded-t-3xl"><SheetHeader><SheetTitle>Фильтры</SheetTitle><SheetDescription>Все показатели пересчитаются одновременно.</SheetDescription></SheetHeader><div className="px-4 pb-4"><FilterFields filters={filters} setFilter={setFilter} data={data} forcedType={forcedType} idPrefix="mobile" /><div className="mt-5 grid grid-cols-2 gap-2"><Button variant="outline" onClick={() => setFilters(defaultFilters())}><RotateCcw data-icon="inline-start" /> Сбросить</Button><Button onClick={() => setMobileFiltersOpen(false)}>Показать · {metrics.videoCount} активных</Button></div></div></SheetContent></Sheet>
-
-      <VideoDialog open={videoOpen} onClose={() => setVideoOpen(false)} data={data} video={editingVideo} mutate={mutate} />
-      <CreatorDialog open={creatorOpen} onClose={() => setCreatorOpen(false)} data={data} creator={editingCreator} mutate={mutate} />
-      <ProducerDialog open={producerOpen} onClose={() => setProducerOpen(false)} producer={editingProducer} mutate={mutate} />
-      <CreatorDetailDialog creator={selectedCreator} videos={filteredRecords} onClose={() => setSelectedCreatorId(null)} onEdit={openEditCreator} onEditVideo={openEditVideo} />
-      <ProducerDetailDialog producer={selectedProducer} creators={data.creators} rows={allCreatorRows} videos={filteredRecords} onClose={() => setSelectedProducerId(null)} onEdit={openEditProducer} onCreator={(id) => { setSelectedProducerId(null); setSelectedCreatorId(id); }} />
-      <ExportDialog open={exportOpen} onClose={() => setExportOpen(false)} onDownload={downloadReport} />
-
-      {toast && <output aria-live="polite" className="fixed bottom-24 right-4 z-[70] flex max-w-sm items-center gap-3 rounded-2xl bg-foreground px-4 py-3 text-sm font-semibold text-background shadow-2xl sm:bottom-6"><CheckCircle2 className="size-4 text-[var(--accent-strong)]" />{toast}</output>}
+      <div className="fixed inset-x-4 bottom-4 z-20 grid grid-cols-[1fr_auto] gap-2 rounded-2xl border border-border bg-card/95 p-2 shadow-[0_18px_55px_rgba(35,31,55,.18)] backdrop-blur-xl sm:hidden">
+        <Button
+          variant="outline"
+          onClick={beginExport}
+          disabled={actionsDisabled}
+        >
+          <FileSpreadsheet data-icon="inline-start" /> Экспорт
+        </Button>
+        <Button onClick={openAddChannel} disabled={actionsDisabled}>
+          <Plus data-icon="inline-start" /> Добавить канал
+        </Button>
+      </div>
+      <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
+        <SheetContent side="left" className="w-[310px]">
+          <SheetHeader>
+            <Brand />
+            <SheetTitle className="sr-only">Навигация</SheetTitle>
+            <SheetDescription className="sr-only">
+              Разделы сервиса
+            </SheetDescription>
+          </SheetHeader>
+          <nav className="space-y-1 px-3">
+            {navigation.map((item) => (
+              <button
+                type="button"
+                key={item.id}
+                onClick={() => changeView(item.id)}
+                className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-semibold ${view === item.id ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
+              >
+                <item.icon className="size-4" />
+                {item.label}
+              </button>
+            ))}
+          </nav>
+          <div className="mt-auto border-t border-border p-4">
+            <Button
+              className="w-full justify-start"
+              disabled={actionsDisabled}
+              onClick={() => {
+                setMobileMenuOpen(false);
+                openAddChannel();
+              }}
+            >
+              <Plus data-icon="inline-start" /> Добавить канал
+            </Button>
+            <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
+              Метрики обновляются автоматически по подключённым каналам.
+            </p>
+          </div>
+        </SheetContent>
+      </Sheet>
+      <Sheet open={mobileFiltersOpen} onOpenChange={setMobileFiltersOpen}>
+        <SheetContent
+          side="bottom"
+          className="max-h-[90vh] overflow-y-auto rounded-t-3xl"
+        >
+          <SheetHeader>
+            <SheetTitle>Фильтры каналов</SheetTitle>
+            <SheetDescription>
+              Все агрегаты пересчитаются одновременно.
+            </SheetDescription>
+          </SheetHeader>
+          <div className="px-4 pb-4">
+            <FilterFields
+              filters={filters}
+              setFilter={setFilter}
+              data={data}
+              forcedType={forcedType}
+              idPrefix="mobile"
+            />
+            <div className="mt-5 grid grid-cols-2 gap-2">
+              <Button
+                variant="outline"
+                onClick={() => setFilters(defaultFilters())}
+              >
+                <RotateCcw data-icon="inline-start" /> Сбросить
+              </Button>
+              <Button onClick={() => setMobileFiltersOpen(false)}>
+                Показать · {metrics.channelCount}
+              </Button>
+            </div>
+          </div>
+        </SheetContent>
+      </Sheet>
+      <ChannelDialog
+        open={channelOpen}
+        onClose={() => setChannelOpen(false)}
+        data={data}
+        mutate={mutate}
+      />
+      <ChannelCorrectionDialog
+        open={Boolean(correctingChannel)}
+        onClose={() => setCorrectingChannelId(null)}
+        channel={correctingChannel}
+        mutate={mutate}
+      />
+      <CreatorDialog
+        open={Boolean(editingCreator)}
+        onClose={() => setEditingCreator(null)}
+        data={data}
+        creator={editingCreator}
+        mutate={mutate}
+      />
+      <ProducerDialog
+        open={Boolean(editingProducer)}
+        onClose={() => setEditingProducer(null)}
+        producer={editingProducer}
+        mutate={mutate}
+      />
+      <ChannelDetailDialog
+        channel={selectedChannel}
+        onClose={() => setSelectedChannelId(null)}
+        onCorrect={openCorrectChannel}
+      />
+      <CreatorDetailDialog
+        creator={selectedCreator}
+        channels={filteredChannels}
+        onClose={() => setSelectedCreatorId(null)}
+        onEdit={openEditCreator}
+        onChannel={openChannel}
+        onCorrectChannel={openCorrectChannel}
+      />
+      <ProducerDetailDialog
+        producer={selectedProducer}
+        creators={data.creators}
+        rows={allCreatorRows}
+        channels={filteredChannels}
+        onClose={() => setSelectedProducerId(null)}
+        onEdit={openEditProducer}
+        onCreator={(id) => {
+          setSelectedProducerId(null);
+          setSelectedCreatorId(id);
+        }}
+      />
+      <ExportDialog
+        open={exportOpen}
+        onClose={() => setExportOpen(false)}
+        onDownload={downloadReport}
+      />
+      {toast && (
+        <output
+          aria-live="polite"
+          className="fixed bottom-24 right-4 z-[70] flex max-w-sm items-center gap-3 rounded-2xl bg-foreground px-4 py-3 text-sm font-semibold text-background shadow-2xl sm:bottom-6"
+        >
+          <CheckCircle2 className="size-4 text-[var(--accent-strong)]" />
+          {toast}
+        </output>
+      )}
     </main>
   );
 }
 
 function Brand() {
-  return <div className="flex items-center gap-3"><div className="grid size-9 place-items-center rounded-xl bg-primary text-primary-foreground shadow-[0_8px_24px_-10px_var(--primary)]"><Sparkles className="size-4" /></div><div><p className="text-sm font-extrabold tracking-[-0.03em]">КОНТЕНТ-ЗАВОД</p><p className="text-[11px] text-muted-foreground">Операционный центр</p></div></div>;
+  return (
+    <div className="flex items-center gap-3">
+      <div className="grid size-9 place-items-center rounded-xl bg-primary text-primary-foreground shadow-[0_8px_24px_-10px_var(--primary)]">
+        <Sparkles className="size-4" />
+      </div>
+      <div>
+        <p className="text-sm font-extrabold tracking-[-0.03em]">
+          КОНТЕНТ-ЗАВОД
+        </p>
+        <p className="text-[11px] text-muted-foreground">Операционный центр</p>
+      </div>
+    </div>
+  );
 }
 
-function Sidebar({ view, onView, onAddCreator, onAddProducer, actionsDisabled }: { view: View; onView: (view: View) => void; onAddCreator: () => void; onAddProducer: () => void; actionsDisabled: boolean }) {
-  return <aside className="sticky top-16 hidden h-[calc(100vh-64px)] border-r border-border/75 px-4 py-6 lg:flex lg:flex-col"><p className="mb-3 px-3 text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground">Рабочее пространство</p><nav className="space-y-1">{navigation.map((item) => <button key={item.id} onClick={() => onView(item.id)} className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold transition-colors ${view === item.id ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}><item.icon className="size-4" />{item.label}</button>)}</nav><div className="mt-auto space-y-2"><p className="px-3 text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground">Справочники</p><button disabled={actionsDisabled} onClick={onAddCreator} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold text-muted-foreground hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-45"><UserRoundPlus className="size-4" />Добавить креатора</button><button disabled={actionsDisabled} onClick={onAddProducer} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold text-muted-foreground hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-45"><UsersRound className="size-4" />Добавить продюсера</button><div className="mt-3 rounded-2xl border border-border bg-card p-4"><p className="text-xs font-bold">Расчёты автоматические</p><p className="mt-1 text-xs leading-relaxed text-muted-foreground">Новый ролик сразу обновляет все итоги.</p><div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted"><div className="h-full w-full rounded-full bg-[var(--success)]" /></div></div></div></aside>;
+function Sidebar({
+  view,
+  onView,
+}: {
+  view: View;
+  onView: (view: View) => void;
+}) {
+  return (
+    <aside className="sticky top-16 hidden h-[calc(100vh-64px)] border-r border-border/75 px-4 py-6 lg:flex lg:flex-col">
+      <p className="mb-3 px-3 text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground">
+        Рабочее пространство
+      </p>
+      <nav className="space-y-1">
+        {navigation.map((item) => (
+          <button
+            type="button"
+            key={item.id}
+            onClick={() => onView(item.id)}
+            className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold transition-colors ${view === item.id ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
+          >
+            <item.icon className="size-4" />
+            {item.label}
+          </button>
+        ))}
+      </nav>
+      <div className="mt-auto rounded-2xl border border-border bg-card p-4">
+        <div className="flex items-center gap-2">
+          <RefreshCw className="size-4 text-[var(--success)]" />
+          <p className="text-xs font-bold">Автосинхронизация</p>
+        </div>
+        <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+          Аудитория, охваты и публикации загружаются напрямую с площадок.
+        </p>
+        <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted">
+          <div className="h-full w-full rounded-full bg-[var(--success)]" />
+        </div>
+      </div>
+    </aside>
+  );
 }
 
-function FilterFields({ filters, setFilter, data, forcedType, idPrefix }: { filters: Filters; setFilter: <K extends keyof Filters>(key: K, value: Filters[K]) => void; data: DashboardData; forcedType: '' | CreatorType; idPrefix: 'desktop' | 'mobile' }) {
+function FilterFields({
+  filters,
+  setFilter,
+  data,
+  forcedType,
+  idPrefix,
+}: {
+  filters: Filters;
+  setFilter: <K extends keyof Filters>(key: K, value: Filters[K]) => void;
+  data: DashboardData;
+  forcedType: '' | CreatorType;
+  idPrefix: 'desktop' | 'mobile';
+}) {
   const selectedType = forcedType || filters.type;
-  const creators = data.creators.filter((creator) => (!filters.producerId || creator.producerId === Number(filters.producerId)) && (!selectedType || creator.type === selectedType));
+  const creators = data.creators.filter(
+    (creator) =>
+      (!filters.producerId ||
+        creator.producerId === Number(filters.producerId)) &&
+      (!selectedType || creator.type === selectedType),
+  );
   const id = (name: string) => `${idPrefix}-filter-${name}`;
-  return <div className="grid gap-4 lg:grid-cols-[1fr_1fr_.8fr_1fr_1fr_1fr] lg:items-end"><div className="space-y-2"><Label htmlFor={id('from')} className="text-xs text-muted-foreground">Период с</Label><Input id={id('from')} type="date" max={filters.to || undefined} value={filters.from} onChange={(event) => setFilter('from', event.target.value)} /></div><div className="space-y-2"><Label htmlFor={id('to')} className="text-xs text-muted-foreground">по</Label><Input id={id('to')} type="date" min={filters.from || undefined} value={filters.to} onChange={(event) => setFilter('to', event.target.value)} /></div><div className="space-y-2"><Label htmlFor={id('type')} className="text-xs text-muted-foreground">Тип</Label><NativeSelect id={id('type')} className="w-full" value={forcedType || filters.type} disabled={Boolean(forcedType)} onChange={(event) => setFilter('type', event.target.value as Filters['type'])}><NativeSelectOption value="">Все</NativeSelectOption><NativeSelectOption value="UGC">UGC</NativeSelectOption><NativeSelectOption value="AI">AI</NativeSelectOption></NativeSelect></div><div className="space-y-2"><Label htmlFor={id('producer')} className="text-xs text-muted-foreground">Продюсер</Label><NativeSelect id={id('producer')} className="w-full" value={filters.producerId} onChange={(event) => setFilter('producerId', event.target.value)}><NativeSelectOption value="">Все</NativeSelectOption>{data.producers.map((producer) => <NativeSelectOption key={producer.id} value={producer.id}>{producer.name}</NativeSelectOption>)}</NativeSelect></div><div className="space-y-2"><Label htmlFor={id('creator')} className="text-xs text-muted-foreground">Креатор</Label><NativeSelect id={id('creator')} className="w-full" value={filters.creatorId} onChange={(event) => setFilter('creatorId', event.target.value)}><NativeSelectOption value="">Все</NativeSelectOption>{creators.map((creator) => <NativeSelectOption key={creator.id} value={creator.id}>{creator.name}</NativeSelectOption>)}</NativeSelect></div><div className="space-y-2"><Label htmlFor={id('platform')} className="text-xs text-muted-foreground">Площадка</Label><NativeSelect id={id('platform')} className="w-full" value={filters.platformId} onChange={(event) => setFilter('platformId', event.target.value)}><NativeSelectOption value="">Все</NativeSelectOption>{data.platforms.map((platform) => <NativeSelectOption key={platform.id} value={platform.id}>{platform.name}</NativeSelectOption>)}</NativeSelect></div></div>;
+  return (
+    <div className="grid gap-4 lg:grid-cols-5 lg:items-end">
+      <div className="space-y-2">
+        <Label htmlFor={id('type')} className="text-xs text-muted-foreground">
+          Тип
+        </Label>
+        <NativeSelect
+          id={id('type')}
+          className="w-full"
+          value={forcedType || filters.type}
+          disabled={Boolean(forcedType)}
+          onChange={(event) =>
+            setFilter('type', event.target.value as Filters['type'])
+          }
+        >
+          <NativeSelectOption value="">Все</NativeSelectOption>
+          <NativeSelectOption value="UGC">UGC</NativeSelectOption>
+          <NativeSelectOption value="AI">AI</NativeSelectOption>
+        </NativeSelect>
+      </div>
+      <div className="space-y-2">
+        <Label
+          htmlFor={id('producer')}
+          className="text-xs text-muted-foreground"
+        >
+          Продюсер
+        </Label>
+        <NativeSelect
+          id={id('producer')}
+          className="w-full"
+          value={filters.producerId}
+          onChange={(event) => setFilter('producerId', event.target.value)}
+        >
+          <NativeSelectOption value="">Все</NativeSelectOption>
+          {data.producers.map((producer) => (
+            <NativeSelectOption key={producer.id} value={producer.id}>
+              {producer.name}
+            </NativeSelectOption>
+          ))}
+        </NativeSelect>
+      </div>
+      <div className="space-y-2">
+        <Label
+          htmlFor={id('creator')}
+          className="text-xs text-muted-foreground"
+        >
+          Креатор
+        </Label>
+        <NativeSelect
+          id={id('creator')}
+          className="w-full"
+          value={filters.creatorId}
+          onChange={(event) => setFilter('creatorId', event.target.value)}
+        >
+          <NativeSelectOption value="">Все</NativeSelectOption>
+          {creators.map((creator) => (
+            <NativeSelectOption key={creator.id} value={creator.id}>
+              {creator.name}
+            </NativeSelectOption>
+          ))}
+        </NativeSelect>
+      </div>
+      <div className="space-y-2">
+        <Label
+          htmlFor={id('platform')}
+          className="text-xs text-muted-foreground"
+        >
+          Площадка
+        </Label>
+        <NativeSelect
+          id={id('platform')}
+          className="w-full"
+          value={filters.platformId}
+          onChange={(event) => setFilter('platformId', event.target.value)}
+        >
+          <NativeSelectOption value="">Все</NativeSelectOption>
+          {data.platforms.map((platform) => (
+            <NativeSelectOption key={platform.id} value={platform.id}>
+              {platform.name}
+            </NativeSelectOption>
+          ))}
+        </NativeSelect>
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor={id('status')} className="text-xs text-muted-foreground">
+          Статус
+        </Label>
+        <NativeSelect
+          id={id('status')}
+          className="w-full"
+          value={filters.status}
+          onChange={(event) =>
+            setFilter('status', event.target.value as FilterStatus)
+          }
+        >
+          <NativeSelectOption value="">Все статусы</NativeSelectOption>
+          <NativeSelectOption value="active">Активные</NativeSelectOption>
+          <NativeSelectOption value="inactive">Неактивные</NativeSelectOption>
+          <NativeSelectOption value="pending">В очереди</NativeSelectOption>
+          <NativeSelectOption value="syncing">Обновляются</NativeSelectOption>
+          <NativeSelectOption value="success">
+            Синхронизированы
+          </NativeSelectOption>
+          <NativeSelectOption value="error">С ошибкой</NativeSelectOption>
+          <NativeSelectOption value="needs_auth">
+            Нужен доступ
+          </NativeSelectOption>
+        </NativeSelect>
+      </div>
+    </div>
+  );
 }
 
-function FilterBar({ filters, setFilter, data, forcedType, onReset, resultCount }: { filters: Filters; setFilter: <K extends keyof Filters>(key: K, value: Filters[K]) => void; data: DashboardData; forcedType: '' | CreatorType; onReset: () => void; resultCount: number }) {
-  return <div className="rounded-2xl border border-border/80 bg-card p-4"><FilterFields filters={filters} setFilter={setFilter} data={data} forcedType={forcedType} idPrefix="desktop" /><div className="mt-3 flex items-center justify-between border-t border-border/70 pt-3"><p className="text-xs text-muted-foreground">По выбранным фильтрам · <strong className="text-foreground">{resultCount} активных роликов</strong></p><Button variant="ghost" size="sm" onClick={onReset}><RotateCcw data-icon="inline-start" /> Сбросить</Button></div></div>;
+function FilterBar({
+  filters,
+  setFilter,
+  data,
+  forcedType,
+  onReset,
+  resultCount,
+}: {
+  filters: Filters;
+  setFilter: <K extends keyof Filters>(key: K, value: Filters[K]) => void;
+  data: DashboardData;
+  forcedType: '' | CreatorType;
+  onReset: () => void;
+  resultCount: number;
+}) {
+  return (
+    <div className="rounded-2xl border border-border/80 bg-card p-4">
+      <FilterFields
+        filters={filters}
+        setFilter={setFilter}
+        data={data}
+        forcedType={forcedType}
+        idPrefix="desktop"
+      />
+      <div className="mt-3 flex items-center justify-between border-t border-border/70 pt-3">
+        <p className="text-xs text-muted-foreground">
+          По выбранным фильтрам ·{' '}
+          <strong className="text-foreground">{resultCount} каналов</strong>
+        </p>
+        <Button variant="ghost" size="sm" onClick={onReset}>
+          <RotateCcw data-icon="inline-start" /> Сбросить
+        </Button>
+      </div>
+    </div>
+  );
 }
 
 function LoadingState() {
-  return <div className="space-y-5" aria-label="Загрузка"><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{[0, 1, 2, 3].map((item) => <div key={item} className="h-36 animate-pulse rounded-2xl bg-muted" />)}</div><div className="grid gap-4 xl:grid-cols-2"><div className="h-64 animate-pulse rounded-3xl bg-muted" /><div className="h-64 animate-pulse rounded-3xl bg-muted" /></div><div className="h-72 animate-pulse rounded-3xl bg-muted" /></div>;
+  return (
+    <div className="space-y-5" aria-label="Загрузка">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        {[0, 1, 2, 3, 4].map((item) => (
+          <div key={item} className="h-36 animate-pulse rounded-2xl bg-muted" />
+        ))}
+      </div>
+      <div className="grid gap-4 xl:grid-cols-2">
+        <div className="h-64 animate-pulse rounded-3xl bg-muted" />
+        <div className="h-64 animate-pulse rounded-3xl bg-muted" />
+      </div>
+      <div className="h-72 animate-pulse rounded-3xl bg-muted" />
+    </div>
+  );
 }
 
-function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
-  return <Alert variant="destructive" className="mx-auto max-w-xl p-5"><RefreshCw /><AlertTitle>Данные не загрузились</AlertTitle><AlertDescription><p>{message}</p><Button variant="outline" size="sm" className="mt-4" onClick={onRetry}><RefreshCw data-icon="inline-start" /> Попробовать снова</Button></AlertDescription></Alert>;
+function ErrorState({
+  message,
+  onRetry,
+}: {
+  message: string;
+  onRetry: () => void;
+}) {
+  return (
+    <Alert variant="destructive" className="mx-auto max-w-xl p-5">
+      <RefreshCw />
+      <AlertTitle>Данные не загрузились</AlertTitle>
+      <AlertDescription>
+        <p>{message}</p>
+        <Button variant="outline" size="sm" className="mt-4" onClick={onRetry}>
+          <RefreshCw data-icon="inline-start" /> Попробовать снова
+        </Button>
+      </AlertDescription>
+    </Alert>
+  );
 }

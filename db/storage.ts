@@ -3,6 +3,9 @@ import { env } from 'cloudflare:workers';
 type Status = 'active' | 'inactive';
 type VideoStatus = 'active' | 'deleted' | 'error';
 type CreatorType = 'UGC' | 'AI';
+type ChannelSyncStatus = 'pending' | 'success' | 'error' | 'needs_auth';
+type ChannelSyncFailureStatus = Extract<ChannelSyncStatus, 'error' | 'needs_auth'>;
+type SupportedPlatformName = 'YouTube' | 'RuTube' | 'VK' | 'TikTok' | 'Instagram';
 
 const schemaStatements = [
   `CREATE TABLE IF NOT EXISTS app_meta (
@@ -62,6 +65,66 @@ const schemaStatements = [
     recorded_at TEXT NOT NULL
   )`,
   `CREATE INDEX IF NOT EXISTS idx_reach_history_video_id ON reach_history (video_id)`,
+  `CREATE TABLE IF NOT EXISTS creator_channels (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    creator_id INTEGER NOT NULL REFERENCES creators(id),
+    platform_id INTEGER NOT NULL REFERENCES platforms(id),
+    url TEXT NOT NULL,
+    normalized_url TEXT NOT NULL,
+    provider_channel_id TEXT,
+    handle TEXT,
+    title TEXT,
+    avatar_url TEXT,
+    followers INTEGER CHECK (followers IS NULL OR followers >= 0),
+    total_views INTEGER CHECK (total_views IS NULL OR total_views >= 0),
+    publication_count INTEGER CHECK (publication_count IS NULL OR publication_count >= 0),
+    reach_30d INTEGER CHECK (reach_30d IS NULL OR reach_30d >= 0),
+    followers_override INTEGER CHECK (followers_override IS NULL OR followers_override >= 0),
+    total_views_override INTEGER CHECK (total_views_override IS NULL OR total_views_override >= 0),
+    publication_count_override INTEGER CHECK (publication_count_override IS NULL OR publication_count_override >= 0),
+    reach_30d_override INTEGER CHECK (reach_30d_override IS NULL OR reach_30d_override >= 0),
+    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
+    sync_status TEXT NOT NULL DEFAULT 'pending' CHECK (sync_status IN ('pending', 'success', 'error', 'needs_auth')),
+    sync_error TEXT,
+    sync_source TEXT,
+    last_synced_at TEXT,
+    metrics_updated_at TEXT,
+    next_sync_at TEXT,
+    lease_until TEXT,
+    lease_token TEXT,
+    consecutive_failures INTEGER NOT NULL DEFAULT 0 CHECK (consecutive_failures >= 0),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_creator_channels_normalized_url ON creator_channels (normalized_url)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_creator_channels_provider_id ON creator_channels (platform_id, provider_channel_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_creator_channels_creator_id ON creator_channels (creator_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_creator_channels_platform_id ON creator_channels (platform_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_creator_channels_due ON creator_channels (status, next_sync_at, lease_until)`,
+  `CREATE INDEX IF NOT EXISTS idx_creator_channels_lease_token ON creator_channels (lease_token)`,
+  `CREATE TABLE IF NOT EXISTS channel_sync_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_id INTEGER NOT NULL REFERENCES creator_channels(id),
+    status TEXT NOT NULL CHECK (status IN ('success', 'error', 'needs_auth')),
+    observed_at TEXT NOT NULL,
+    recorded_at TEXT NOT NULL,
+    source TEXT,
+    error_message TEXT,
+    provider_channel_id TEXT,
+    handle TEXT,
+    title TEXT,
+    avatar_url TEXT,
+    followers INTEGER CHECK (followers IS NULL OR followers >= 0),
+    total_views INTEGER CHECK (total_views IS NULL OR total_views >= 0),
+    publication_count INTEGER CHECK (publication_count IS NULL OR publication_count >= 0),
+    reach_30d INTEGER CHECK (reach_30d IS NULL OR reach_30d >= 0),
+    creator_type_snapshot TEXT NOT NULL CHECK (creator_type_snapshot IN ('UGC', 'AI')),
+    producer_id_snapshot INTEGER NOT NULL
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_channel_sync_history_observation ON channel_sync_history (channel_id, observed_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_channel_sync_history_channel_recorded ON channel_sync_history (channel_id, recorded_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_channel_sync_history_status_recorded ON channel_sync_history (status, recorded_at)`,
+  `INSERT OR IGNORE INTO app_meta (key, value) VALUES ('channel_model_version', '1')`,
 ];
 
 const producersSeed = [
@@ -153,12 +216,121 @@ export function normalizeUrl(value: string) {
   return parsed.toString();
 }
 
+export interface NormalizedChannelUrl {
+  normalizedUrl: string;
+  platformName: SupportedPlatformName;
+  inferredHandle: string | null;
+}
+
+function channelUrl(value: unknown) {
+  const raw = typeof value === 'string' ? value.trim() : '';
+  if (!raw || raw.length > 2048) throw new Error('Укажите корректную ссылку на канал');
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error('Укажите корректную ссылку на канал');
+  }
+  if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) {
+    throw new Error('Ссылка на канал должна начинаться с http:// или https://');
+  }
+  parsed.protocol = 'https:';
+  parsed.hostname = parsed.hostname.toLowerCase().replace(/^(www\.|m\.)/, '');
+  parsed.port = '';
+  parsed.hash = '';
+  parsed.search = '';
+  return parsed;
+}
+
+function decodedPathSegments(parsed: URL) {
+  try {
+    return parsed.pathname.split('/').filter(Boolean).map((part) => {
+      const decoded = decodeURIComponent(part).trim().normalize('NFC');
+      if (!decoded || decoded.includes('/') || decoded.includes('\\')) throw new Error('invalid path');
+      return decoded;
+    });
+  } catch {
+    throw new Error('В ссылке на канал есть некорректный путь');
+  }
+}
+
+function canonicalChannelResult(
+  parsed: URL,
+  hostname: string,
+  segments: string[],
+  platformName: SupportedPlatformName,
+  inferredHandle: string | null,
+): NormalizedChannelUrl {
+  parsed.hostname = hostname;
+  parsed.pathname = `/${segments.join('/')}`;
+  const normalizedUrl = parsed.toString().replace(/\/$/, '');
+  return { normalizedUrl, platformName, inferredHandle };
+}
+
+export function normalizeChannelUrl(value: unknown): NormalizedChannelUrl {
+  const parsed = channelUrl(value);
+  const segments = decodedPathSegments(parsed);
+  const first = (segments[0] ?? '').toLowerCase();
+
+  if (parsed.hostname === 'youtube.com') {
+    const contentRoutes = new Set(['watch', 'shorts', 'live', 'playlist', 'embed', 'clip', 'v', 'feed']);
+    if (!first || contentRoutes.has(first)) throw new Error('Укажите ссылку на YouTube-канал, а не на видео');
+    if (first.startsWith('@') && first.length > 1) {
+      return canonicalChannelResult(parsed, 'youtube.com', [first], 'YouTube', first);
+    }
+    if (['channel', 'c', 'user'].includes(first) && segments[1]) {
+      const identity = first === 'channel' ? segments[1] : segments[1].toLowerCase();
+      return canonicalChannelResult(parsed, 'youtube.com', [first, identity], 'YouTube', first === 'channel' ? null : identity);
+    }
+    throw new Error('Поддерживаются YouTube-ссылки вида /@name, /channel/id, /c/name или /user/name');
+  }
+  if (parsed.hostname === 'youtu.be') throw new Error('Короткая YouTube-ссылка ведёт на видео, а не на канал');
+
+  if (parsed.hostname === 'rutube.ru') {
+    if (first === 'video' && (segments[1] ?? '').toLowerCase() === 'person' && segments[2]) {
+      return canonicalChannelResult(parsed, 'rutube.ru', ['channel', segments[2]], 'RuTube', segments[2]);
+    }
+    if (!['channel', 'u'].includes(first) || !segments[1]) {
+      throw new Error('Укажите ссылку на RuTube-канал вида /channel/id, /video/person/id или /u/name');
+    }
+    const identity = first === 'u' ? segments[1].toLowerCase() : segments[1];
+    return canonicalChannelResult(parsed, 'rutube.ru', [first, identity], 'RuTube', identity);
+  }
+
+  if (parsed.hostname === 'tiktok.com') {
+    if (!first.startsWith('@') || first.length < 2 || segments.length !== 1) {
+      throw new Error('Укажите ссылку на TikTok-профиль вида /@name');
+    }
+    return canonicalChannelResult(parsed, 'tiktok.com', [first], 'TikTok', first);
+  }
+
+  if (parsed.hostname === 'instagram.com') {
+    const reserved = new Set(['accounts', 'direct', 'explore', 'p', 'reel', 'reels', 'stories', 'tv']);
+    const allowedSubpages = new Set(['reels', 'tagged']);
+    if (!first || reserved.has(first) || (segments.length > 1 && !allowedSubpages.has((segments[1] ?? '').toLowerCase()))) {
+      throw new Error('Укажите ссылку на Instagram-профиль, а не на публикацию');
+    }
+    return canonicalChannelResult(parsed, 'instagram.com', [first], 'Instagram', first);
+  }
+
+  if (parsed.hostname === 'vk.com' || parsed.hostname === 'vkvideo.ru') {
+    const contentRoute = /^(?:video|clip|wall|photo|story|market)(?:[-_]|$)/i;
+    if (!segments[0] || segments.length !== 1 || contentRoute.test(segments[0])) {
+      throw new Error('Укажите ссылку на VK-сообщество или профиль, а не на публикацию');
+    }
+    return canonicalChannelResult(parsed, parsed.hostname, [first], 'VK', first);
+  }
+
+  throw new Error('Поддерживаются каналы YouTube, RuTube, VK, TikTok и Instagram');
+}
+
 const URL_MIGRATION_BATCH_SIZE = 25;
 
 type UrlMigrationRow = { id: number; url: string; normalizedUrl: string; status: VideoStatus };
 type UrlOwner = { id: number; status: VideoStatus };
 type DashboardVideoRow = UrlMigrationRow & Record<string, unknown>;
 type UrlAliasRow = { canonicalUrl: string; videoId: number };
+type DashboardChannelRow = Record<string, unknown> & { isSyncing: number };
 
 function reconcileLegacyDuplicateStatuses(videos: DashboardVideoRow[], aliases: UrlAliasRow[]) {
   const videosById = new Map(videos.map((video) => [video.id, video]));
@@ -271,6 +443,42 @@ async function migrateUrlKeys(binding: D1Database) {
   await binding.batch(operations);
 }
 
+async function enforceYouTubeRetention(binding: D1Database) {
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const sweepDay = nowIso.slice(0, 10);
+  const marker = await binding.prepare("SELECT value FROM app_meta WHERE key = 'youtube_retention_sweep_day'")
+    .first<{ value: string }>();
+  if (marker?.value === sweepDay) return;
+
+  // The sweep runs once per UTC day, so the one-day buffer keeps retained data
+  // below the 30-day ceiling even immediately before the next sweep.
+  const cutoff = new Date(now.getTime() - YOUTUBE_HISTORY_RETENTION_MS + YOUTUBE_RETENTION_SWEEP_BUFFER_MS).toISOString();
+  await binding.batch([
+    binding.prepare(`DELETE FROM channel_sync_history
+      WHERE recorded_at < ? AND channel_id IN (
+        SELECT ch.id FROM creator_channels ch
+        JOIN platforms pf ON pf.id = ch.platform_id
+        WHERE pf.name = 'YouTube' COLLATE NOCASE
+      )`).bind(cutoff),
+    binding.prepare(`UPDATE creator_channels SET
+      title = NULL, avatar_url = NULL, followers = NULL, total_views = NULL,
+      publication_count = NULL, reach_30d = NULL, metrics_updated_at = NULL,
+      sync_source = NULL,
+      sync_status = CASE WHEN sync_status = 'success' THEN 'pending' ELSE sync_status END,
+      next_sync_at = CASE
+        WHEN status = 'active' AND (next_sync_at IS NULL OR next_sync_at > ?) THEN ?
+        ELSE next_sync_at
+      END,
+      updated_at = ?
+      WHERE metrics_updated_at < ? AND platform_id IN (
+        SELECT id FROM platforms WHERE name = 'YouTube' COLLATE NOCASE
+      )`).bind(nowIso, nowIso, nowIso, cutoff),
+    binding.prepare(`INSERT INTO app_meta (key, value) VALUES ('youtube_retention_sweep_day', ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value`).bind(sweepDay),
+  ]);
+}
+
 export async function ensureDatabase() {
   const binding = db();
   await binding.batch(schemaStatements.map((statement) => binding.prepare(statement)));
@@ -328,18 +536,48 @@ export async function ensureDatabase() {
 
   const currentVersion = await binding.prepare("SELECT value FROM app_meta WHERE key = 'seed_version'").first<{ value: string }>();
   if (currentVersion?.value === '2') await migrateUrlKeys(binding);
+  await enforceYouTubeRetention(binding);
 }
 
 export async function getDashboardData() {
   await ensureDatabase();
   const binding = db();
-  const [producers, creators, platforms, videos, urlAliases] = await Promise.all([
+  const now = new Date().toISOString();
+  const [producers, creators, platforms, channels, videos, urlAliases] = await Promise.all([
     binding.prepare('SELECT id, name, status, created_at AS createdAt FROM producers ORDER BY name COLLATE NOCASE').all(),
     binding.prepare(`SELECT c.id, c.name, c.type, c.producer_id AS producerId, p.name AS producerName,
       c.status, c.created_at AS createdAt
       FROM creators c JOIN producers p ON p.id = c.producer_id
       ORDER BY c.name COLLATE NOCASE`).all(),
     binding.prepare('SELECT id, name, domains, status FROM platforms ORDER BY id').all(),
+    binding.prepare(`SELECT ch.id, ch.creator_id AS creatorId, c.name AS creatorName, c.type AS creatorType,
+      c.producer_id AS producerId, p.name AS producerName, ch.platform_id AS platformId,
+      pf.name AS platformName, ch.url, ch.normalized_url AS normalizedUrl,
+      ch.provider_channel_id AS providerChannelId, ch.handle, ch.title, ch.avatar_url AS avatarUrl,
+      ch.followers, ch.total_views AS totalViews, ch.publication_count AS publicationCount,
+      ch.reach_30d AS reach30d, ch.followers_override AS followersOverride,
+      ch.total_views_override AS totalViewsOverride,
+      ch.publication_count_override AS publicationCountOverride,
+      ch.reach_30d_override AS reach30dOverride,
+      COALESCE(ch.followers_override, ch.followers) AS effectiveFollowers,
+      COALESCE(ch.total_views_override, ch.total_views) AS effectiveTotalViews,
+      COALESCE(ch.publication_count_override, ch.publication_count) AS effectivePublicationCount,
+      COALESCE(ch.reach_30d_override, ch.reach_30d) AS effectiveReach30d,
+      ch.status, ch.sync_status AS syncStatus,
+      CASE WHEN ch.lease_until > ? THEN 'syncing' ELSE ch.sync_status END AS lastSyncStatus,
+      ch.sync_error AS syncError, ch.sync_error AS lastSyncError,
+      ch.sync_source AS syncSource, ch.sync_source AS parserSource,
+      ch.last_synced_at AS lastSyncedAt, ch.last_synced_at AS lastAttemptAt,
+      ch.metrics_updated_at AS metricsUpdatedAt, ch.metrics_updated_at AS lastSyncAt,
+      ch.next_sync_at AS nextSyncAt,
+      ch.lease_until AS leaseUntil, ch.consecutive_failures AS consecutiveFailures,
+      CASE WHEN ch.lease_until > ? THEN 1 ELSE 0 END AS isSyncing,
+      ch.created_at AS createdAt, ch.updated_at AS updatedAt
+      FROM creator_channels ch
+      JOIN creators c ON c.id = ch.creator_id
+      JOIN producers p ON p.id = c.producer_id
+      JOIN platforms pf ON pf.id = ch.platform_id
+      ORDER BY c.name COLLATE NOCASE, pf.id, ch.id`).bind(now, now).all<DashboardChannelRow>(),
     binding.prepare(`SELECT v.id, v.creator_id AS creatorId, c.name AS creatorName, c.type AS creatorType,
       c.producer_id AS producerId, p.name AS producerName, v.platform_id AS platformId,
       pf.name AS platformName, v.url, v.normalized_url AS normalizedUrl,
@@ -360,6 +598,7 @@ export async function getDashboardData() {
       ...platform,
       domains: JSON.parse(String(platform.domains)) as string[],
     })),
+    channels: channels.results.map((channel) => ({ ...channel, isSyncing: Boolean(channel.isSyncing) })),
     videos: reconcileLegacyDuplicateStatuses(videos.results, urlAliases.results),
   };
 }
@@ -371,6 +610,9 @@ function cleanName(value: unknown, label: string) {
 }
 
 function integerId(value: unknown, label: string) {
+  if (typeof value !== 'number' && typeof value !== 'string') {
+    throw new Error(`Некорректное поле «${label}»`);
+  }
   const id = Number(value);
   if (!Number.isInteger(id) || id <= 0) throw new Error(`Некорректное поле «${label}»`);
   return id;
@@ -389,6 +631,47 @@ function validateCreatorType(value: unknown): CreatorType {
 function validateVideoStatus(value: unknown): VideoStatus {
   if (value !== 'active' && value !== 'deleted' && value !== 'error') throw new Error('Некорректный статус ролика');
   return value;
+}
+
+export class ChannelStorageError extends Error {
+  constructor(message: string, readonly statusCode: number) {
+    super(message);
+    this.name = 'ChannelStorageError';
+  }
+}
+
+function hasOwn(input: Record<string, unknown>, key: string) {
+  return Object.prototype.hasOwnProperty.call(input, key);
+}
+
+function optionalCorrection(input: Record<string, unknown>, key: string, label: string) {
+  if (!hasOwn(input, key)) return undefined;
+  const raw = input[key];
+  if (raw === null || (typeof raw === 'string' && raw.trim() === '')) return null;
+  if (typeof raw !== 'number' && typeof raw !== 'string') {
+    throw new Error(`${label} должен быть целым неотрицательным числом`);
+  }
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < 0) throw new Error(`${label} должен быть целым неотрицательным числом`);
+  return value;
+}
+
+function deriveCreatorName(channel: NormalizedChannelUrl) {
+  const pathIdentity = new URL(channel.normalizedUrl).pathname.split('/').filter(Boolean).at(-1) ?? '';
+  const identity = (channel.inferredHandle ?? pathIdentity).replace(/^@/, '').trim();
+  const suffix = ` · ${channel.platformName}`;
+  const availableIdentityLength = 80 - suffix.length;
+  const candidate = identity.length >= 2
+    ? `${identity.slice(0, availableIdentityLength)}${suffix}`
+    : `Канал ${channel.platformName}`;
+  return cleanName(candidate, 'Имя креатора');
+}
+
+async function channelPlatform(binding: D1Database, platformName: SupportedPlatformName) {
+  const platform = await binding.prepare('SELECT id, name, status FROM platforms WHERE name = ? COLLATE NOCASE')
+    .bind(platformName).first<{ id: number; name: string; status: Status }>();
+  if (!platform || platform.status !== 'active') throw new Error(`Площадка ${platformName} недоступна`);
+  return platform;
 }
 
 export async function createProducer(input: Record<string, unknown>) {
@@ -436,6 +719,363 @@ export async function updateCreator(input: Record<string, unknown>) {
   await db().prepare('UPDATE creators SET name = ?, type = ?, producer_id = ?, status = ? WHERE id = ?')
     .bind(cleanName(input.name, 'Имя креатора'), validateCreatorType(input.type), producerId, validateStatus(input.status), id).run();
   return id;
+}
+
+export async function createChannel(input: Record<string, unknown>) {
+  await ensureDatabase();
+  const binding = db();
+  const channel = normalizeChannelUrl(input.url);
+  const platform = await channelPlatform(binding, channel.platformName);
+  const status = validateStatus(input.status ?? 'active');
+  const now = new Date().toISOString();
+  const nextSyncAt = status === 'active' ? now : null;
+  const hasCreatorId = input.creatorId !== undefined && input.creatorId !== null && input.creatorId !== '';
+  const hasNewCreatorFields = ['newCreatorName', 'newCreatorType', 'newCreatorProducerId'].some((key) => hasOwn(input, key));
+
+  if (hasCreatorId && hasNewCreatorFields) throw new Error('Выберите существующего креатора или создайте нового');
+
+  if (hasCreatorId) {
+    const creatorId = integerId(input.creatorId, 'Креатор');
+    const creator = await binding.prepare('SELECT id, status FROM creators WHERE id = ?').bind(creatorId).first<{ id: number; status: Status }>();
+    if (!creator) throw new Error('Креатор не найден');
+    if (creator.status !== 'active') throw new Error('Нельзя добавить канал неактивному креатору');
+    const result = await binding.prepare(`INSERT INTO creator_channels
+      (creator_id, platform_id, url, normalized_url, handle, status, sync_status,
+       next_sync_at, consecutive_failures, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, 0, ?, ?)`).bind(
+        creatorId,
+        platform.id,
+        channel.normalizedUrl,
+        channel.normalizedUrl,
+        channel.inferredHandle,
+        status,
+        nextSyncAt,
+        now,
+        now,
+      ).run();
+    return Number(result.meta.last_row_id);
+  }
+
+  if (!hasNewCreatorFields) throw new Error('Выберите креатора или укажите данные нового');
+  const producerId = integerId(input.newCreatorProducerId, 'Продюсер');
+  const producer = await activeProducer(producerId);
+  if (producer.status !== 'active') throw new Error('Нельзя назначить неактивного продюсера');
+  const type = validateCreatorType(input.newCreatorType);
+  const requestedName = typeof input.newCreatorName === 'string' ? input.newCreatorName.trim() : '';
+  const name = requestedName ? cleanName(requestedName, 'Имя креатора') : deriveCreatorName(channel);
+  const results = await binding.batch([
+    binding.prepare(`INSERT INTO creators (name, type, producer_id, status, created_at)
+      VALUES (?, ?, ?, 'active', ?)`).bind(name, type, producerId, now),
+    binding.prepare(`INSERT INTO creator_channels
+      (creator_id, platform_id, url, normalized_url, handle, status, sync_status,
+       next_sync_at, consecutive_failures, created_at, updated_at)
+      SELECT id, ?, ?, ?, ?, ?, 'pending', ?, 0, ?, ? FROM creators WHERE name = ?`)
+      .bind(platform.id, channel.normalizedUrl, channel.normalizedUrl, channel.inferredHandle, status, nextSyncAt, now, now, name),
+  ]);
+  const id = Number(results[1]?.meta.last_row_id ?? 0);
+  if (id > 0) return id;
+  const created = await binding.prepare('SELECT id FROM creator_channels WHERE normalized_url = ?')
+    .bind(channel.normalizedUrl).first<{ id: number }>();
+  if (!created) throw new Error('Не удалось создать канал');
+  return created.id;
+}
+
+type SqlValue = string | number | null;
+
+export async function updateChannel(input: Record<string, unknown>) {
+  await ensureDatabase();
+  const binding = db();
+  const id = integerId(input.id, 'Канал');
+  const existing = await binding.prepare('SELECT id, status FROM creator_channels WHERE id = ?')
+    .bind(id).first<{ id: number; status: Status }>();
+  if (!existing) throw new ChannelStorageError('Канал не найден', 404);
+  if (hasOwn(input, 'url')) {
+    throw new ChannelStorageError('Ссылку канала нельзя заменить; отключите старый канал и добавьте новый', 400);
+  }
+
+  const now = new Date().toISOString();
+  const changes = new Map<string, SqlValue>();
+  if (hasOwn(input, 'status')) {
+    const status = validateStatus(input.status);
+    changes.set('status', status);
+    if (status !== existing.status) changes.set('next_sync_at', status === 'active' ? now : null);
+    if (status === 'inactive' && status !== existing.status) {
+      changes.set('lease_until', null);
+      changes.set('lease_token', null);
+    }
+  }
+
+  const correctionColumns = [
+    ['followersOverride', 'followers_override', 'Коррекция подписчиков'],
+    ['totalViewsOverride', 'total_views_override', 'Коррекция просмотров'],
+    ['publicationCountOverride', 'publication_count_override', 'Коррекция публикаций'],
+    ['reach30dOverride', 'reach_30d_override', 'Коррекция охвата за 30 дней'],
+  ] as const;
+  for (const [inputKey, column, label] of correctionColumns) {
+    const value = optionalCorrection(input, inputKey, label);
+    if (value !== undefined) changes.set(column, value);
+  }
+
+  changes.set('updated_at', now);
+  const assignments = [...changes.keys()].map((column) => `${column} = ?`).join(', ');
+  const result = await binding.prepare(`UPDATE creator_channels SET ${assignments} WHERE id = ?`)
+    .bind(...changes.values(), id).run();
+  if (!result.meta.changes) throw new ChannelStorageError('Канал не найден', 404);
+  return id;
+}
+
+const CHANNEL_LEASE_MS = 15 * 60_000;
+const CHANNEL_SUCCESS_INTERVAL_MS = 6 * 60 * 60_000;
+const YOUTUBE_HISTORY_RETENTION_MS = 30 * 24 * 60 * 60_000;
+const YOUTUBE_RETENTION_SWEEP_BUFFER_MS = 24 * 60 * 60_000;
+const NEEDS_AUTH_RETRY_MS = 24 * 60 * 60_000;
+
+function optionalSyncText(
+  input: Record<string, unknown>,
+  key: string,
+  label: string,
+  maxLength: number,
+): string | null {
+  if (!hasOwn(input, key) || input[key] === null || input[key] === '') return null;
+  if (typeof input[key] !== 'string') throw new Error(`Поле «${label}» должно быть строкой`);
+  const value = input[key].trim();
+  if (!value) return null;
+  if (value.length > maxLength) throw new Error(`Поле «${label}» не должно быть длиннее ${maxLength} символов`);
+  return value;
+}
+
+function requiredSyncText(input: Record<string, unknown>, key: string, label: string, maxLength: number) {
+  const value = optionalSyncText(input, key, label, maxLength);
+  if (!value) throw new Error(`Укажите поле «${label}»`);
+  return value;
+}
+
+function optionalSyncMetric(input: Record<string, unknown>, key: string, label: string) {
+  if (!hasOwn(input, key)) return null;
+  if (input[key] === null || (typeof input[key] === 'string' && input[key].trim() === '')) {
+    return null;
+  }
+  if (typeof input[key] !== 'number' && typeof input[key] !== 'string') {
+    throw new Error(`${label} должно быть целым неотрицательным числом`);
+  }
+  const value = Number(input[key]);
+  if (!Number.isSafeInteger(value) || value < 0) throw new Error(`${label} должно быть целым неотрицательным числом`);
+  return value;
+}
+
+function optionalAvatarUrl(input: Record<string, unknown>) {
+  const avatar = optionalSyncText(input, 'avatarUrl', 'Аватар', 2048);
+  if (!avatar) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(avatar);
+  } catch {
+    throw new Error('Аватар должен быть корректной URL-ссылкой');
+  }
+  if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('Аватар должен быть HTTP(S)-ссылкой');
+  return avatar;
+}
+
+function observationTime(value: unknown) {
+  if (typeof value !== 'string' || !value.trim()) throw new Error('Укажите observedAt');
+  const timestamp = Date.parse(value);
+  const now = Date.now();
+  if (!Number.isFinite(timestamp) || timestamp < Date.UTC(2000, 0, 1) || timestamp > now + 10 * 60_000) {
+    throw new Error('observedAt должен быть корректной датой не позже текущего времени');
+  }
+  return new Date(timestamp).toISOString();
+}
+
+type ChannelSyncState = {
+  id: number;
+  providerChannelId: string | null;
+  lastSyncedAt: string | null;
+  leaseUntil: string | null;
+  leaseToken: string | null;
+  consecutiveFailures: number;
+};
+
+async function channelSyncState(binding: D1Database, channelId: number) {
+  const state = await binding.prepare(`SELECT id, provider_channel_id AS providerChannelId,
+    last_synced_at AS lastSyncedAt, lease_until AS leaseUntil, lease_token AS leaseToken,
+    consecutive_failures AS consecutiveFailures FROM creator_channels WHERE id = ?`)
+    .bind(channelId).first<ChannelSyncState>();
+  if (!state) throw new ChannelStorageError('Канал не найден', 404);
+  return state;
+}
+
+function ensureFreshObservation(state: ChannelSyncState, observedAt: string) {
+  if (!state.lastSyncedAt) return false;
+  if (state.lastSyncedAt === observedAt) return true;
+  if (state.lastSyncedAt > observedAt) throw new ChannelStorageError('Получены устаревшие данные синхронизации', 409);
+  return false;
+}
+
+function ensureLeaseOwnership(state: ChannelSyncState, leaseToken: string, nowIso: string) {
+  if (state.leaseToken !== leaseToken || !state.leaseUntil || state.leaseUntil <= nowIso) {
+    throw new ChannelStorageError('Аренда канала истекла; получите новое задание', 409);
+  }
+}
+
+async function syncRaceResult(binding: D1Database, channelId: number, observedAt: string) {
+  const state = await channelSyncState(binding, channelId);
+  if (state.lastSyncedAt === observedAt) return { id: channelId, duplicate: true };
+  if (!state.lastSyncedAt || state.lastSyncedAt < observedAt) {
+    throw new ChannelStorageError('Аренда канала истекла; получите новое задание', 409);
+  }
+  throw new ChannelStorageError('Получены устаревшие данные синхронизации', 409);
+}
+
+export async function claimDueChannels(limitValue: unknown = 1) {
+  await ensureDatabase();
+  const requestedLimit = limitValue ?? 1;
+  if (typeof requestedLimit !== 'number' || !Number.isInteger(requestedLimit)
+    || requestedLimit < 1 || requestedLimit > 25) {
+    throw new Error('limit должен быть целым числом от 1 до 25');
+  }
+  const binding = db();
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const leaseUntil = new Date(now.getTime() + CHANNEL_LEASE_MS).toISOString();
+  const leaseToken = crypto.randomUUID();
+  await binding.prepare(`UPDATE creator_channels SET lease_until = ?, lease_token = ?, updated_at = ?
+    WHERE id IN (
+      SELECT id FROM creator_channels
+      WHERE status = 'active'
+        AND (next_sync_at IS NULL OR next_sync_at <= ?)
+        AND (lease_until IS NULL OR lease_until <= ?)
+      ORDER BY COALESCE(next_sync_at, created_at), id
+      LIMIT ?
+    )`).bind(leaseUntil, leaseToken, nowIso, nowIso, nowIso, requestedLimit).run();
+  const claimed = await binding.prepare(`SELECT ch.id, ch.url, ch.normalized_url AS normalizedUrl,
+    ch.provider_channel_id AS providerChannelId, ch.handle, ch.title, ch.avatar_url AS avatarUrl,
+    ch.last_synced_at AS lastSyncedAt, ch.metrics_updated_at AS metricsUpdatedAt,
+    ch.next_sync_at AS nextSyncAt, ch.lease_until AS leaseUntil, ch.lease_token AS leaseToken,
+    ch.consecutive_failures AS consecutiveFailures, pf.name AS platformName,
+    c.id AS creatorId, c.name AS creatorName, c.type AS creatorType,
+    c.producer_id AS producerId
+    FROM creator_channels ch
+    JOIN platforms pf ON pf.id = ch.platform_id
+    JOIN creators c ON c.id = ch.creator_id
+    WHERE ch.lease_token = ? ORDER BY ch.id`).bind(leaseToken).all();
+  return claimed.results;
+}
+
+export async function completeChannelSync(input: Record<string, unknown>) {
+  await ensureDatabase();
+  const binding = db();
+  const channelId = integerId(input.channelId, 'Канал');
+  const observedAt = observationTime(input.observedAt);
+  const leaseToken = requiredSyncText(input, 'leaseToken', 'Токен аренды', 128);
+  const requestAcceptedAt = new Date().toISOString();
+  const state = await channelSyncState(binding, channelId);
+  if (ensureFreshObservation(state, observedAt)) return { id: channelId, duplicate: true };
+  ensureLeaseOwnership(state, leaseToken, requestAcceptedAt);
+
+  const parserSource = requiredSyncText(input, 'parserSource', 'Источник синхронизации', 120);
+  const providerChannelId = optionalSyncText(input, 'providerChannelId', 'ID канала у провайдера', 256);
+  if (state.providerChannelId && providerChannelId
+    && providerChannelId !== state.providerChannelId) {
+    throw new ChannelStorageError('ID канала у провайдера не совпадает с ранее определённым', 409);
+  }
+  const stableProviderChannelId = state.providerChannelId ?? providerChannelId;
+  const handle = optionalSyncText(input, 'handle', 'Хэндл', 256);
+  const title = optionalSyncText(input, 'title', 'Название канала', 300);
+  const avatarUrl = optionalAvatarUrl(input);
+  const followers = optionalSyncMetric(input, 'followers', 'Подписчики');
+  const totalViews = optionalSyncMetric(input, 'totalViews', 'Просмотры');
+  const publicationCount = optionalSyncMetric(input, 'publicationCount', 'Публикации');
+  const reach30d = optionalSyncMetric(input, 'reach30d', 'Охват за 30 дней');
+  const now = new Date();
+  const recordedAt = now.toISOString();
+  const nextSyncAt = new Date(now.getTime() + CHANNEL_SUCCESS_INTERVAL_MS).toISOString();
+  const youtubeHistoryCutoff = new Date(now.getTime() - YOUTUBE_HISTORY_RETENTION_MS).toISOString();
+  const results = await binding.batch([
+    binding.prepare(`INSERT INTO channel_sync_history
+      (channel_id, status, observed_at, recorded_at, source, error_message,
+       provider_channel_id, handle, title, avatar_url, followers, total_views,
+       publication_count, reach_30d, creator_type_snapshot, producer_id_snapshot)
+      SELECT ch.id, 'success', ?, ?, ?, NULL,
+        ?, ?, ?, ?, ?, ?, ?, ?,
+        c.type, c.producer_id
+      FROM creator_channels ch JOIN creators c ON c.id = ch.creator_id
+      WHERE ch.id = ? AND (ch.last_synced_at IS NULL OR ch.last_synced_at < ?)
+        AND ch.lease_token = ? AND ch.lease_until > ?`)
+      .bind(observedAt, recordedAt, parserSource, stableProviderChannelId,
+        handle, title, avatarUrl, followers, totalViews, publicationCount, reach30d,
+        channelId, observedAt, leaseToken, recordedAt),
+    binding.prepare(`UPDATE creator_channels SET
+      provider_channel_id = ?, handle = ?, title = ?, avatar_url = ?,
+      followers = ?, total_views = ?, publication_count = ?, reach_30d = ?,
+      sync_status = 'success', sync_error = NULL, sync_source = ?, last_synced_at = ?,
+      metrics_updated_at = ?, next_sync_at = CASE WHEN status = 'active' THEN ? ELSE NULL END,
+      lease_until = NULL, lease_token = NULL, consecutive_failures = 0, updated_at = ?
+      WHERE id = ? AND (last_synced_at IS NULL OR last_synced_at < ?)
+        AND lease_token = ? AND lease_until > ?`)
+      .bind(stableProviderChannelId, handle, title, avatarUrl,
+        followers, totalViews, publicationCount, reach30d,
+        parserSource, observedAt, observedAt, nextSyncAt,
+        recordedAt, channelId, observedAt, leaseToken, recordedAt),
+    binding.prepare(`DELETE FROM channel_sync_history
+      WHERE channel_id = ? AND recorded_at < ?
+        AND EXISTS (
+          SELECT 1 FROM creator_channels ch
+          JOIN platforms pf ON pf.id = ch.platform_id
+          WHERE ch.id = ? AND ch.last_synced_at = ?
+            AND pf.name = 'YouTube' COLLATE NOCASE
+        )`).bind(channelId, youtubeHistoryCutoff, channelId, observedAt),
+  ]);
+  if (!results[1]?.meta.changes) return syncRaceResult(binding, channelId, observedAt);
+  return { id: channelId, duplicate: false };
+}
+
+function failureRetryAt(status: ChannelSyncFailureStatus, failureCount: number, now: Date) {
+  if (status === 'needs_auth') return new Date(now.getTime() + NEEDS_AUTH_RETRY_MS).toISOString();
+  const exponent = Math.min(Math.max(failureCount - 1, 0), 5);
+  const delayMs = Math.min(15 * 60_000 * (2 ** exponent), CHANNEL_SUCCESS_INTERVAL_MS);
+  return new Date(now.getTime() + delayMs).toISOString();
+}
+
+export async function failChannelSync(input: Record<string, unknown>) {
+  await ensureDatabase();
+  const binding = db();
+  const channelId = integerId(input.channelId, 'Канал');
+  const observedAt = observationTime(input.observedAt);
+  const leaseToken = requiredSyncText(input, 'leaseToken', 'Токен аренды', 128);
+  const requestAcceptedAt = new Date().toISOString();
+  const state = await channelSyncState(binding, channelId);
+  if (ensureFreshObservation(state, observedAt)) return { id: channelId, duplicate: true };
+  ensureLeaseOwnership(state, leaseToken, requestAcceptedAt);
+
+  const errorMessage = requiredSyncText(input, 'error', 'Ошибка синхронизации', 1000);
+  const parserSource = optionalSyncText(input, 'parserSource', 'Источник синхронизации', 120);
+  const status: ChannelSyncFailureStatus = input.status === undefined ? 'error'
+    : input.status === 'error' || input.status === 'needs_auth' ? input.status
+      : (() => { throw new Error('Статус ошибки должен быть error или needs_auth'); })();
+  const now = new Date();
+  const recordedAt = now.toISOString();
+  const nextSyncAt = failureRetryAt(status, state.consecutiveFailures + 1, now);
+  const results = await binding.batch([
+    binding.prepare(`INSERT INTO channel_sync_history
+      (channel_id, status, observed_at, recorded_at, source, error_message,
+       creator_type_snapshot, producer_id_snapshot)
+      SELECT ch.id, ?, ?, ?, ?, ?, c.type, c.producer_id
+      FROM creator_channels ch JOIN creators c ON c.id = ch.creator_id
+      WHERE ch.id = ? AND (ch.last_synced_at IS NULL OR ch.last_synced_at < ?)
+        AND ch.lease_token = ? AND ch.lease_until > ?`)
+      .bind(status, observedAt, recordedAt, parserSource, errorMessage,
+        channelId, observedAt, leaseToken, recordedAt),
+    binding.prepare(`UPDATE creator_channels SET sync_status = ?, sync_error = ?,
+      last_synced_at = ?,
+      next_sync_at = CASE WHEN status = 'active' THEN ? ELSE NULL END,
+      lease_until = NULL, lease_token = NULL, consecutive_failures = consecutive_failures + 1,
+      updated_at = ? WHERE id = ? AND (last_synced_at IS NULL OR last_synced_at < ?)
+        AND lease_token = ? AND lease_until > ?`)
+      .bind(status, errorMessage, observedAt, nextSyncAt, recordedAt,
+        channelId, observedAt, leaseToken, recordedAt),
+  ]);
+  if (!results[1]?.meta.changes) return syncRaceResult(binding, channelId, observedAt);
+  return { id: channelId, duplicate: false };
 }
 
 function videoValues(input: Record<string, unknown>) {

@@ -1,4 +1,12 @@
-import type { Creator, Metrics, Platform, Producer, SummaryRow, Video } from '@/lib/content-types';
+import type {
+  Channel,
+  ChannelEffectiveMetrics,
+  Creator,
+  Metrics,
+  Platform,
+  Producer,
+  SummaryRow,
+} from '@/lib/content-types';
 
 export const numberFormatter = new Intl.NumberFormat('ru-RU');
 
@@ -6,89 +14,200 @@ export function formatNumber(value: number) {
   return numberFormatter.format(value);
 }
 
-export function formatDate(value: string) {
-  return new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: 'short', year: 'numeric' })
-    .format(new Date(`${value}T12:00:00`))
-    .replace('.', '');
+function nullableMetricValue(...values: Array<number | null | undefined>) {
+  for (const value of values) {
+    if (typeof value === 'number' && Number.isFinite(value))
+      return Math.max(0, Math.round(value));
+  }
+  return null;
 }
 
-export function makeMetrics(videos: Video[]): Metrics {
-  const reach = videos.reduce((sum, video) => sum + video.reach, 0);
+export function effectiveChannelMetrics(
+  channel: Channel,
+): ChannelEffectiveMetrics {
   return {
-    creatorCount: new Set(videos.map((video) => video.creatorId)).size,
-    videoCount: videos.length,
-    reach,
-    average: videos.length ? Math.round(reach / videos.length) : 0,
+    followers: nullableMetricValue(
+      channel.effectiveFollowers,
+      channel.followersOverride,
+      channel.followers,
+    ),
+    totalViews: nullableMetricValue(
+      channel.effectiveTotalViews,
+      channel.totalViewsOverride,
+      channel.totalViews,
+    ),
+    publicationCount: nullableMetricValue(
+      channel.effectivePublicationCount,
+      channel.publicationCountOverride,
+      channel.publicationCount,
+    ),
+    reach30d: nullableMetricValue(
+      channel.effectiveReach30d,
+      channel.reach30dOverride,
+      channel.reach30d,
+    ),
   };
 }
 
-export function buildCreatorRows(videos: Video[], creators: Creator[], includeEmpty = false): SummaryRow[] {
-  return creators
-    .map((creator) => {
-      const matching = videos.filter((video) => video.creatorId === creator.id);
-      const reach = matching.reduce((sum, video) => sum + video.reach, 0);
-      return {
-        id: creator.id,
-        name: creator.name,
-        type: creator.type,
-        producerName: creator.producerName,
-        videoCount: matching.length,
-        reach,
-        average: matching.length ? Math.round(reach / matching.length) : 0,
-      } satisfies SummaryRow;
-    })
-    .filter((row) => includeEmpty || row.videoCount > 0)
-    .sort((a, b) => b.reach - a.reach || a.name.localeCompare(b.name, 'ru'));
+export function makeMetrics(channels: Channel[]): Metrics {
+  const creatorIds = new Set<number>();
+  const totals: Metrics = {
+    creatorCount: 0,
+    channelCount: 0,
+    followers: 0,
+    followersCount: 0,
+    totalViews: 0,
+    totalViewsCount: 0,
+    publicationCount: 0,
+    publicationCountCount: 0,
+    reach30d: 0,
+    reach30dCount: 0,
+  };
+
+  for (const channel of channels) {
+    const metrics = effectiveChannelMetrics(channel);
+    creatorIds.add(channel.creatorId);
+    totals.channelCount += 1;
+    if (metrics.followers !== null) {
+      totals.followers += metrics.followers;
+      totals.followersCount += 1;
+    }
+    if (metrics.totalViews !== null) {
+      totals.totalViews += metrics.totalViews;
+      totals.totalViewsCount += 1;
+    }
+    if (metrics.publicationCount !== null) {
+      totals.publicationCount += metrics.publicationCount;
+      totals.publicationCountCount += 1;
+    }
+    if (metrics.reach30d !== null) {
+      totals.reach30d += metrics.reach30d;
+      totals.reach30dCount += 1;
+    }
+  }
+  totals.creatorCount = creatorIds.size;
+  return totals;
 }
 
-export function buildProducerRows(videos: Video[], producers: Producer[], includeEmpty = false): SummaryRow[] {
+function summaryMetrics(channels: Channel[]) {
+  const metrics = makeMetrics(channels);
+  return {
+    channelCount: metrics.channelCount,
+    followers: metrics.followers,
+    followersCount: metrics.followersCount,
+    totalViews: metrics.totalViews,
+    totalViewsCount: metrics.totalViewsCount,
+    publicationCount: metrics.publicationCount,
+    publicationCountCount: metrics.publicationCountCount,
+    reach30d: metrics.reach30d,
+    reach30dCount: metrics.reach30dCount,
+  };
+}
+
+export function buildCreatorRows(
+  channels: Channel[],
+  creators: Creator[],
+  includeEmpty = false,
+): SummaryRow[] {
+  return creators
+    .map((creator) => ({
+      id: creator.id,
+      name: creator.name,
+      type: creator.type,
+      producerName: creator.producerName,
+      ...summaryMetrics(
+        channels.filter((channel) => channel.creatorId === creator.id),
+      ),
+    }))
+    .filter((row) => includeEmpty || row.channelCount > 0)
+    .sort(
+      (a, b) =>
+        b.totalViews - a.totalViews ||
+        b.followers - a.followers ||
+        a.name.localeCompare(b.name, 'ru'),
+    );
+}
+
+export function buildProducerRows(
+  channels: Channel[],
+  producers: Producer[],
+  includeEmpty = false,
+): SummaryRow[] {
   return producers
     .map((producer) => {
-      const matching = videos.filter((video) => video.producerId === producer.id);
-      const reach = matching.reduce((sum, video) => sum + video.reach, 0);
+      const matching = channels.filter(
+        (channel) => channel.producerId === producer.id,
+      );
       return {
         id: producer.id,
         name: producer.name,
-        creatorCount: new Set(matching.map((video) => video.creatorId)).size,
-        videoCount: matching.length,
-        reach,
-        average: matching.length ? Math.round(reach / matching.length) : 0,
-      } satisfies SummaryRow;
+        creatorCount: new Set(matching.map((channel) => channel.creatorId))
+          .size,
+        ...summaryMetrics(matching),
+      };
     })
-    .filter((row) => includeEmpty || row.videoCount > 0)
-    .sort((a, b) => b.reach - a.reach || a.name.localeCompare(b.name, 'ru'));
+    .filter((row) => includeEmpty || row.channelCount > 0)
+    .sort(
+      (a, b) =>
+        b.totalViews - a.totalViews ||
+        b.followers - a.followers ||
+        a.name.localeCompare(b.name, 'ru'),
+    );
 }
 
 export function detectPlatformId(urlValue: string, platforms: Platform[]) {
   try {
-    const hostname = new URL(urlValue).hostname.toLowerCase().replace(/^(www\.|m\.)/, '');
-    return platforms.find((platform) => platform.domains.some((domain) => hostname === domain || hostname.endsWith(`.${domain}`)))?.id ?? null;
+    const hostname = new URL(urlValue).hostname
+      .toLowerCase()
+      .replace(/^(www\.|m\.)/, '');
+    return (
+      platforms.find((platform) =>
+        platform.domains.some(
+          (domain) => hostname === domain || hostname.endsWith(`.${domain}`),
+        ),
+      )?.id ?? null
+    );
   } catch {
     return null;
   }
 }
 
-export function isoToday() {
-  const now = new Date();
-  const offset = now.getTimezoneOffset() * 60_000;
-  return new Date(now.getTime() - offset).toISOString().slice(0, 10);
+export function formatDateTime(value: string | null) {
+  if (!value) return 'Никогда';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Никогда';
+  return new Intl.DateTimeFormat('ru-RU', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date);
 }
 
-export function currentMonthRange() {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = now.getMonth();
-  const localIso = (date: Date) => {
-    const offset = date.getTimezoneOffset() * 60_000;
-    return new Date(date.getTime() - offset).toISOString().slice(0, 10);
-  };
-  return {
-    from: localIso(new Date(year, month, 1)),
-    to: localIso(new Date(year, month + 1, 0)),
-  };
+export type Freshness = 'never' | 'fresh' | 'aging' | 'stale';
+
+export function getFreshness(
+  value: string | null,
+  now = Date.now(),
+): Freshness {
+  if (!value) return 'never';
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) return 'never';
+  const age = Math.max(0, now - timestamp);
+  if (age < 24 * 60 * 60 * 1000) return 'fresh';
+  if (age < 72 * 60 * 60 * 1000) return 'aging';
+  return 'stale';
 }
 
-export function periodLabel(from: string, to: string) {
-  const format = (value: string) => value ? new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(`${value}T12:00:00`)) : '…';
-  return `${format(from)} — ${format(to)}`;
+export function formatRelativeSync(value: string | null, now = Date.now()) {
+  if (!value) return 'не синхронизировался';
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) return 'не синхронизировался';
+  const minutes = Math.max(0, Math.round((now - timestamp) / 60_000));
+  if (minutes < 2) return 'только что';
+  if (minutes < 60) return `${minutes} мин назад`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} ч назад`;
+  return `${Math.round(hours / 24)} дн. назад`;
 }

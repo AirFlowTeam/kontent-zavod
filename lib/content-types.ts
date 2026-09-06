@@ -1,6 +1,11 @@
 export type RecordStatus = 'active' | 'inactive';
-export type VideoStatus = 'active' | 'deleted' | 'error';
 export type CreatorType = 'UGC' | 'AI';
+export type ChannelSyncStatus =
+  | 'pending'
+  | 'syncing'
+  | 'success'
+  | 'error'
+  | 'needs_auth';
 
 export interface Producer {
   id: number;
@@ -26,7 +31,7 @@ export interface Creator {
   createdAt: string;
 }
 
-export interface Video {
+export interface Channel {
   id: number;
   creatorId: number;
   creatorName: string;
@@ -37,19 +42,44 @@ export interface Video {
   platformName: string;
   url: string;
   normalizedUrl: string;
-  publishedAt: string;
-  addedAt: string;
-  reach: number;
-  status: VideoStatus;
-  creatorTypeSnapshot: CreatorType;
-  producerIdSnapshot: number;
+  providerChannelId: string | null;
+  handle: string | null;
+  title: string | null;
+  avatarUrl: string | null;
+  status: RecordStatus;
+  followers: number | null;
+  totalViews: number | null;
+  publicationCount: number | null;
+  reach30d: number | null;
+  followersOverride: number | null;
+  totalViewsOverride: number | null;
+  publicationCountOverride: number | null;
+  reach30dOverride: number | null;
+  effectiveFollowers: number | null;
+  effectiveTotalViews: number | null;
+  effectivePublicationCount: number | null;
+  effectiveReach30d: number | null;
+  lastSyncAt: string | null;
+  lastSyncStatus: ChannelSyncStatus | null;
+  lastSyncError: string | null;
+  parserSource: string | null;
+  nextSyncAt: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface DashboardData {
   producers: Producer[];
   creators: Creator[];
   platforms: Platform[];
-  videos: Video[];
+  channels: Channel[];
+}
+
+export interface ChannelEffectiveMetrics {
+  followers: number | null;
+  totalViews: number | null;
+  publicationCount: number | null;
+  reach30d: number | null;
 }
 
 export interface SummaryRow {
@@ -58,14 +88,26 @@ export interface SummaryRow {
   type?: CreatorType;
   producerName?: string;
   creatorCount?: number;
-  videoCount: number;
-  reach: number;
-  average: number;
+  channelCount: number;
+  followers: number;
+  followersCount: number;
+  totalViews: number;
+  totalViewsCount: number;
+  publicationCount: number;
+  publicationCountCount: number;
+  reach30d: number;
+  reach30dCount: number;
 }
 
 export interface Metrics {
   creatorCount: number;
-  videoCount: number;
-  reach: number;
-  average: number;
+  channelCount: number;
+  followers: number;
+  followersCount: number;
+  totalViews: number;
+  totalViewsCount: number;
+  publicationCount: number;
+  publicationCountCount: number;
+  reach30d: number;
+  reach30dCount: number;
 }
