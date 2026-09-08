@@ -1,0 +1,46 @@
+[Unit]
+Description=Kontent Zavod Telegram creator bot
+After=network-online.target kontent-zavod.service
+Wants=network-online.target
+Requires=kontent-zavod.service
+PartOf=kontent-zavod.service
+
+[Service]
+Type=simple
+User=kontentzavod
+Group=kontentzavod
+WorkingDirectory=/opt/kontent-zavod/current
+Environment=NODE_ENV=production
+Environment=CONTENT_FACTORY_BASE_URL=http://127.0.0.1:18082
+Environment=YTDLP_BIN=/usr/local/bin/yt-dlp
+Environment=PARSER_TIMEOUT_SECONDS=120
+EnvironmentFile=/etc/kontent-zavod/sync.env
+EnvironmentFile=/etc/kontent-zavod/telegram.env
+ExecStart=/opt/kontent-zavod-runtime/node/bin/node /opt/kontent-zavod/current/scripts/telegram-bot.mjs
+Restart=always
+RestartSec=10
+TimeoutStopSec=20
+KillSignal=SIGTERM
+UMask=0077
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadOnlyPaths=/opt/kontent-zavod/current
+
+MemoryHigh=384M
+MemoryMax=512M
+TasksMax=48
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target

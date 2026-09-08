@@ -124,6 +124,29 @@ const schemaStatements = [
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_channel_sync_history_observation ON channel_sync_history (channel_id, observed_at)`,
   `CREATE INDEX IF NOT EXISTS idx_channel_sync_history_channel_recorded ON channel_sync_history (channel_id, recorded_at)`,
   `CREATE INDEX IF NOT EXISTS idx_channel_sync_history_status_recorded ON channel_sync_history (status, recorded_at)`,
+  `CREATE TABLE IF NOT EXISTS telegram_creator_links (
+    telegram_user_id TEXT PRIMARY KEY NOT NULL,
+    creator_id INTEGER NOT NULL REFERENCES creators(id),
+    chat_id TEXT NOT NULL,
+    username TEXT,
+    display_name TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_telegram_creator_links_creator_id ON telegram_creator_links (creator_id)`,
+  `CREATE TABLE IF NOT EXISTS telegram_submissions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    update_id INTEGER NOT NULL,
+    telegram_user_id TEXT NOT NULL REFERENCES telegram_creator_links(telegram_user_id),
+    creator_id INTEGER NOT NULL REFERENCES creators(id),
+    channel_id INTEGER NOT NULL REFERENCES creator_channels(id),
+    source_kind TEXT NOT NULL CHECK (source_kind IN ('channel', 'video')),
+    result_status TEXT NOT NULL CHECK (result_status IN ('created', 'existing')),
+    created_at TEXT NOT NULL
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_telegram_submissions_update_id ON telegram_submissions (update_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_telegram_submissions_user_created ON telegram_submissions (telegram_user_id, created_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_telegram_submissions_channel_id ON telegram_submissions (channel_id)`,
   `INSERT OR IGNORE INTO app_meta (key, value) VALUES ('channel_model_version', '1')`,
 ];
 
@@ -238,6 +261,10 @@ function channelUrl(value: unknown) {
   parsed.hostname = parsed.hostname.toLowerCase().replace(/^(www\.|m\.)/, '');
   parsed.port = '';
   parsed.hash = '';
+  if ((parsed.hostname === 'vk.com' || parsed.hostname === 'vkvideo.ru')
+    && [...parsed.searchParams.values()].some((item) => /^(?:video|clip|wall|photo|story|market)-?\d+(?:_|$)/i.test(item))) {
+    throw new Error('Укажите ссылку на VK-сообщество или профиль, а не на публикацию');
+  }
   parsed.search = '';
   return parsed;
 }
@@ -314,8 +341,9 @@ export function normalizeChannelUrl(value: unknown): NormalizedChannelUrl {
   }
 
   if (parsed.hostname === 'vk.com' || parsed.hostname === 'vkvideo.ru') {
-    const contentRoute = /^(?:video|clip|wall|photo|story|market)(?:[-_]|$)/i;
-    if (!segments[0] || segments.length !== 1 || contentRoute.test(segments[0])) {
+    const contentRoute = /^(?:video|clip|wall|photo|story|market)(?:-?\d+(?:_|$)|[-_]|$)/i;
+    const reservedRoute = /^(?:away|feed|im|login|search|share)$/i;
+    if (!segments[0] || segments.length !== 1 || contentRoute.test(segments[0]) || reservedRoute.test(segments[0])) {
       throw new Error('Укажите ссылку на VK-сообщество или профиль, а не на публикацию');
     }
     return canonicalChannelResult(parsed, parsed.hostname, [first], 'VK', first);

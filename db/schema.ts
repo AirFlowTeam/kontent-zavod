@@ -189,3 +189,46 @@ export const channelSyncHistory = sqliteTable(
     check('chk_channel_sync_history_reach_30d', sql`${table.reach30d} IS NULL OR ${table.reach30d} >= 0`),
   ],
 );
+
+export const telegramCreatorLinks = sqliteTable(
+  'telegram_creator_links',
+  {
+    telegramUserId: text('telegram_user_id').primaryKey(),
+    creatorId: integer('creator_id')
+      .notNull()
+      .references(() => creators.id),
+    chatId: text('chat_id').notNull(),
+    username: text('username'),
+    displayName: text('display_name'),
+    createdAt: text('created_at').notNull(),
+    updatedAt: text('updated_at').notNull(),
+  },
+  (table) => [index('idx_telegram_creator_links_creator_id').on(table.creatorId)],
+);
+
+export const telegramSubmissions = sqliteTable(
+  'telegram_submissions',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    updateId: integer('update_id').notNull(),
+    telegramUserId: text('telegram_user_id')
+      .notNull()
+      .references(() => telegramCreatorLinks.telegramUserId),
+    creatorId: integer('creator_id')
+      .notNull()
+      .references(() => creators.id),
+    channelId: integer('channel_id')
+      .notNull()
+      .references(() => creatorChannels.id),
+    sourceKind: text('source_kind', { enum: ['channel', 'video'] }).notNull(),
+    resultStatus: text('result_status', { enum: ['created', 'existing'] }).notNull(),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [
+    uniqueIndex('idx_telegram_submissions_update_id').on(table.updateId),
+    index('idx_telegram_submissions_user_created').on(table.telegramUserId, table.createdAt),
+    index('idx_telegram_submissions_channel_id').on(table.channelId),
+    check('chk_telegram_submissions_source_kind', sql`${table.sourceKind} IN ('channel', 'video')`),
+    check('chk_telegram_submissions_result_status', sql`${table.resultStatus} IN ('created', 'existing')`),
+  ],
+);

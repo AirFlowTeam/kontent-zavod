@@ -10,7 +10,10 @@ the host Nginx instance.
 - Persistent local D1 state: `/var/lib/kontent-zavod/state`
 - Service: `kontent-zavod.service`
 - Always-on channel collector: `kontent-zavod-sync.service` (no cron)
+- Telegram creator bot: `kontent-zavod-telegram.service` (long polling, no cron)
 - Collector credentials: `/etc/kontent-zavod/sync.env` (`0640`, owned by
+  `root:kontentzavod`, never committed)
+- Telegram token: `/etc/kontent-zavod/telegram.env` (`0640`, owned by
   `root:kontentzavod`, never committed)
 
 The Worker must run as a single process because its D1 binding is backed by
@@ -23,3 +26,10 @@ first-party public profile endpoint for numeric channel IDs, and `yt-dlp` as a
 best-effort fallback. It never stores individual publications. Optional
 `YTDLP_COOKIES_FILE` and `PARSER_PROXY_URL` values can be added to `sync.env`
 for providers that require an authenticated session.
+
+The bot works only in private chats. A creator selects their existing profile
+once through an admin-issued invite link/code, then sends either a channel link
+or one of their video links. Video URLs
+are used transiently to resolve the channel and are never stored. The bot calls
+the loopback-only `/api/telegram` endpoint with the service credential already
+used by the collector.
