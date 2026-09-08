@@ -284,8 +284,7 @@ export function channelDescriptorsFromInfo(info, sourceUrl) {
     const expectedHosts = new Set(['rutube.ru']);
     const identity = firstIdentity(nodes, ['channel_id', 'uploader_id'], (value) => /^\d+$/.test(value));
     if (identity) addCandidate(candidates, `https://rutube.ru/channel/${encodeURIComponent(identity)}`, expectedHosts);
-    const handle = firstIdentity(nodes, ['uploader'], (value) => value.length > 0 && value.length <= 256);
-    return [...candidates].slice(0, 1).map((url) => descriptor(url, identity, handle));
+    return [...candidates].slice(0, 1).map((url) => descriptor(url, identity));
   }
   if (host === 'vk.com' || host === 'vkvideo.ru') {
     const expectedHosts = new Set(['vk.com', 'vkvideo.ru']);

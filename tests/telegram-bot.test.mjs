@@ -129,4 +129,11 @@ test('finds creator metadata inside playlist and carousel entries', () => {
     _type: 'playlist',
     entries: [{ uploader_id: '551122' }],
   }, 'https://rutube.ru/video/abc'), ['https://rutube.ru/channel/551122']);
+
+  assert.deepEqual(channelDescriptorsFromInfo({ uploader_id: '551122', uploader: 'Общее имя' },
+    'https://rutube.ru/video/abc'), [{
+    url: 'https://rutube.ru/channel/551122',
+    providerChannelId: '551122',
+    handle: null,
+  }]);
 });
