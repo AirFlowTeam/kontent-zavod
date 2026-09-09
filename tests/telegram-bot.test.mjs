@@ -7,7 +7,19 @@ import {
   directChannelDescriptor,
   extractMessageUrl,
   inspectSubmittedUrl,
+  parseTelegramAdminUserIds,
 } from '../scripts/telegram-bot-lib.mjs';
+
+test('parses a strict persistent Telegram admin allowlist', () => {
+  assert.deepEqual([...parseTelegramAdminUserIds('1053499153, 42,1053499153')], [
+    '1053499153',
+    '42',
+  ]);
+  assert.equal(parseTelegramAdminUserIds('').size, 0);
+  assert.throws(() => parseTelegramAdminUserIds('0'));
+  assert.throws(() => parseTelegramAdminUserIds('1053499153,'));
+  assert.throws(() => parseTelegramAdminUserIds('9007199254740992'));
+});
 
 test('extracts a URL entity and strips sentence punctuation', () => {
   assert.equal(

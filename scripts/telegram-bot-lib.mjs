@@ -10,6 +10,19 @@ const SUPPORTED_HOSTS = new Set([
   'instagram.com',
 ]);
 
+const MAX_SAFE_TELEGRAM_USER_ID = BigInt(Number.MAX_SAFE_INTEGER);
+
+export function parseTelegramAdminUserIds(value = '') {
+  const raw = String(value ?? '').trim();
+  if (!raw) return new Set();
+
+  const ids = raw.split(',').map((item) => item.trim());
+  if (ids.some((id) => !/^[1-9]\d{0,15}$/.test(id) || BigInt(id) > MAX_SAFE_TELEGRAM_USER_ID)) {
+    throw new Error('TELEGRAM_ADMIN_USER_IDS contains an invalid Telegram user ID');
+  }
+  return new Set(ids.map((id) => BigInt(id).toString()));
+}
+
 function cleanHost(hostname) {
   return hostname.toLowerCase().replace(/^(?:www\.|m\.)/, '');
 }

@@ -8,11 +8,13 @@ import {
   directChannelDescriptor,
   extractMessageUrl,
   inspectSubmittedUrl,
+  parseTelegramAdminUserIds,
 } from './telegram-bot-lib.mjs';
 
 const token = process.env.TELEGRAM_BOT_TOKEN?.trim() ?? '';
 const syncSecret = process.env.SYNC_SECRET ?? '';
 const accessCode = process.env.TELEGRAM_ACCESS_CODE?.trim() ?? '';
+const adminUserIds = parseTelegramAdminUserIds(process.env.TELEGRAM_ADMIN_USER_IDS);
 const backendUrl = new URL(process.env.CONTENT_FACTORY_BASE_URL ?? 'http://127.0.0.1:18082');
 const ytDlpBin = process.env.YTDLP_BIN?.trim() || '/usr/local/bin/yt-dlp';
 const ytDlpTimeoutMs = Math.min(300_000, Math.max(30_000, Number(process.env.PARSER_TIMEOUT_SECONDS ?? 120) * 1_000));
@@ -142,6 +144,11 @@ function matchesAccessCode(candidate) {
 
 function accessPrompt() {
   return 'Для первого входа нужна приглашательная ссылка или код доступа. Попросите их у администратора проекта.';
+}
+
+function hasSelectionAccess(telegramUserId) {
+  const normalizedId = String(telegramUserId);
+  return adminUserIds.has(normalizedId) || authorizedUnboundUsers.has(normalizedId);
 }
 
 async function sendMessage(chatId, text, extra = {}) {
@@ -344,7 +351,7 @@ async function handleCommand(message, command, payload = '') {
   const identity = userIdentity(message.from);
   if (command === 'change') {
     const context = await contextFor(identity.telegramUserId);
-    if (context.binding || authorizedUnboundUsers.has(identity.telegramUserId)) {
+    if (context.binding || hasSelectionAccess(identity.telegramUserId)) {
       return showChooser(chatId, identity.telegramUserId);
     }
     return sendMessage(chatId, accessPrompt());
@@ -362,7 +369,7 @@ async function handleCommand(message, command, payload = '') {
   const context = await contextFor(identity.telegramUserId);
   if (!context.binding) {
     if (matchesAccessCode(payload)) authorizedUnboundUsers.add(identity.telegramUserId);
-    if (authorizedUnboundUsers.has(identity.telegramUserId)) return showChooser(chatId, identity.telegramUserId);
+    if (hasSelectionAccess(identity.telegramUserId)) return showChooser(chatId, identity.telegramUserId);
     return sendMessage(chatId, accessPrompt());
   }
   return sendMessage(chatId,
@@ -384,7 +391,7 @@ async function handleMessage(update) {
   const identity = userIdentity(message.from);
   const context = await contextFor(identity.telegramUserId);
   if (!context.binding) {
-    if (authorizedUnboundUsers.has(identity.telegramUserId)) return showChooser(message.chat.id, identity.telegramUserId);
+    if (hasSelectionAccess(identity.telegramUserId)) return showChooser(message.chat.id, identity.telegramUserId);
     return sendMessage(message.chat.id, accessPrompt());
   }
   const previous = recentSubmissions.get(identity.telegramUserId);
@@ -414,7 +421,7 @@ async function handleCallback(update) {
   if (data === 'noop') return;
   const identity = userIdentity(callback.from);
   const current = await contextFor(identity.telegramUserId);
-  if (!current.binding && !authorizedUnboundUsers.has(identity.telegramUserId)) {
+  if (!current.binding && !hasSelectionAccess(identity.telegramUserId)) {
     await sendMessage(message.chat.id, accessPrompt());
     return;
   }
@@ -495,7 +502,11 @@ async function main() {
     ],
     scope: { type: 'all_private_chats' },
   });
-  console.log(JSON.stringify({ message: 'telegram bot started', username: me.username ?? null }));
+  console.log(JSON.stringify({
+    message: 'telegram bot started',
+    username: me.username ?? null,
+    adminAccessCount: adminUserIds.size,
+  }));
 
   let offset = 0;
   let failures = 0;

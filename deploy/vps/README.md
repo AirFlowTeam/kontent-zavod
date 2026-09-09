@@ -33,3 +33,7 @@ or one of their video links. Video URLs
 are used transiently to resolve the channel and are never stored. The bot calls
 the loopback-only `/api/telegram` endpoint with the service credential already
 used by the collector.
+
+`TELEGRAM_ADMIN_USER_IDS` in `telegram.env` is an optional comma-separated
+allowlist. Listed accounts can open the creator selector with a plain `/start`
+or `/change`; the IDs are kept in server configuration and survive restarts.
