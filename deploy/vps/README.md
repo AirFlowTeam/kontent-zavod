@@ -53,6 +53,11 @@ persistent database before applying additive migrations and changing the release
 symlink. On the original runtime-created schema, apply only the verified missing
 migration; do not replay earlier CREATE TABLE migrations blindly.
 
+Extract release archives with `--no-same-owner`. Before startup, create writable
+`.wrangler` and `dist/server/.wrangler/tmp` directories in the new release,
+owned by `kontentzavod:kontentzavod` (0750). The remaining source can stay read-only.
+Do not regard `systemctl is-active` as readiness: verify `/api/data` and logs too.
+
 `memory-resilience.conf` is a drop-in for this app service only. A low soft memory
 limit previously left workerd indefinitely throttled instead of restarting.
 Keep the 1 GiB hard cap and OOM restart; do not restore the old MemoryHigh=768M.
