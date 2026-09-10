@@ -215,7 +215,7 @@ type UrlMigrationRow = { id: number; url: string; normalizedUrl: string; status:
 type UrlOwner = { id: number; status: VideoStatus };
 type DashboardVideoRow = UrlMigrationRow & Record<string, unknown>;
 type UrlAliasRow = { canonicalUrl: string; videoId: number };
-type DashboardChannelRow = Record<string, unknown> & { isSyncing: number };
+type DashboardChannelRow = Record<string, unknown> & { id: number; isSyncing: number; creatorType: string; producerId: number };
 
 function reconcileLegacyDuplicateStatuses(videos: DashboardVideoRow[], aliases: UrlAliasRow[]) {
   const videosById = new Map(videos.map((video) => [video.id, video]));
@@ -348,6 +348,7 @@ async function enforceYouTubeRetention(binding: D1Database) {
       )`).bind(cutoff),
     binding.prepare(`UPDATE creator_channels SET
       title = NULL, avatar_url = NULL, followers = NULL, total_views = NULL,
+      total_likes = NULL,
       publication_count = NULL, reach_30d = NULL, metrics_updated_at = NULL,
       sync_source = NULL,
       sync_status = CASE WHEN sync_status = 'success' THEN 'pending' ELSE sync_status END,
@@ -444,6 +445,8 @@ export async function getDashboardData() {
       pf.name AS platformName, ch.url, ch.normalized_url AS normalizedUrl,
       ch.provider_channel_id AS providerChannelId, ch.handle, ch.title, ch.avatar_url AS avatarUrl,
       ch.followers, ch.total_views AS totalViews, ch.publication_count AS publicationCount,
+      ch.total_likes AS totalLikes, ch.total_likes_override AS totalLikesOverride,
+      COALESCE(ch.total_likes_override, ch.total_likes) AS effectiveTotalLikes,
       ch.reach_30d AS reach30d, ch.followers_override AS followersOverride,
       ch.total_views_override AS totalViewsOverride,
       ch.publication_count_override AS publicationCountOverride,
@@ -704,6 +707,7 @@ export async function updateChannel(input: Record<string, unknown>) {
   const correctionColumns = [
     ['followersOverride', 'followers_override', 'Коррекция подписчиков'],
     ['totalViewsOverride', 'total_views_override', 'Коррекция просмотров'],
+    ['totalLikesOverride', 'total_likes_override', 'Коррекция лайков'],
     ['publicationCountOverride', 'publication_count_override', 'Коррекция публикаций'],
     ['reach30dOverride', 'reach_30d_override', 'Коррекция охвата за 30 дней'],
   ] as const;
@@ -884,9 +888,10 @@ export async function completeChannelSync(input: Record<string, unknown>) {
   const avatarUrl = optionalAvatarUrl(input);
   const followers = optionalSyncMetric(input, 'followers', 'Подписчики');
   const totalViews = optionalSyncMetric(input, 'totalViews', 'Просмотры');
+  const totalLikes = optionalSyncMetric(input, 'totalLikes', 'Лайки');
   const publicationCount = optionalSyncMetric(input, 'publicationCount', 'Публикации');
   const reach30d = optionalSyncMetric(input, 'reach30d', 'Охват за 30 дней');
-  if ([followers, totalViews, publicationCount, reach30d].every((value) => value === null)) {
+  if ([followers, totalViews, totalLikes, publicationCount, reach30d].every((value) => value === null)) {
     throw new ChannelStorageError('Площадка не предоставила ни одной метрики канала', 422);
   }
   const now = new Date();
@@ -897,26 +902,26 @@ export async function completeChannelSync(input: Record<string, unknown>) {
     binding.prepare(`INSERT INTO channel_sync_history
       (channel_id, status, observed_at, recorded_at, source, error_message,
        provider_channel_id, handle, title, avatar_url, followers, total_views,
-       publication_count, reach_30d, creator_type_snapshot, producer_id_snapshot)
+       publication_count, reach_30d, total_likes, creator_type_snapshot, producer_id_snapshot)
       SELECT ch.id, 'success', ?, ?, ?, NULL,
-        ?, ?, ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?, ?, ?, ?,
         c.type, c.producer_id
       FROM creator_channels ch JOIN creators c ON c.id = ch.creator_id
       WHERE ch.id = ? AND (ch.last_synced_at IS NULL OR ch.last_synced_at < ?)
         AND ch.lease_token = ? AND ch.lease_until > ?`)
       .bind(observedAt, recordedAt, parserSource, stableProviderChannelId,
-        handle, title, avatarUrl, followers, totalViews, publicationCount, reach30d,
+        handle, title, avatarUrl, followers, totalViews, publicationCount, reach30d, totalLikes,
         channelId, observedAt, leaseToken, recordedAt),
     binding.prepare(`UPDATE creator_channels SET
       provider_channel_id = ?, handle = COALESCE(?, handle), title = COALESCE(?, title), avatar_url = COALESCE(?, avatar_url),
-      followers = ?, total_views = ?, publication_count = ?, reach_30d = ?,
+      followers = ?, total_views = ?, publication_count = ?, reach_30d = ?, total_likes = ?,
       sync_status = 'success', sync_error = NULL, sync_source = ?, last_synced_at = ?,
       metrics_updated_at = ?, next_sync_at = CASE WHEN status = 'active' THEN ? ELSE NULL END,
       lease_until = NULL, lease_token = NULL, consecutive_failures = 0, updated_at = ?
       WHERE id = ? AND (last_synced_at IS NULL OR last_synced_at < ?)
         AND lease_token = ? AND lease_until > ?`)
       .bind(stableProviderChannelId, handle, title, avatarUrl,
-        followers, totalViews, publicationCount, reach30d,
+        followers, totalViews, publicationCount, reach30d, totalLikes,
         parserSource, observedAt, observedAt, nextSyncAt,
         recordedAt, channelId, observedAt, leaseToken, recordedAt),
     binding.prepare(`DELETE FROM channel_sync_history

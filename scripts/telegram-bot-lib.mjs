@@ -47,8 +47,9 @@ function trimUrlPunctuation(value) {
   });
 }
 
-export function extractMessageUrl(message) {
-  if (!message || typeof message !== 'object') return null;
+export function extractMessageUrls(message) {
+  if (!message || typeof message !== 'object') return [];
+  const urls = new Set();
   const fields = [
     [message.text, message.entities],
     [message.caption, message.caption_entities],
@@ -57,21 +58,22 @@ export function extractMessageUrl(message) {
     if (typeof text !== 'string') continue;
     if (Array.isArray(entities)) {
       for (const entity of entities) {
-        if (entity?.type === 'text_link' && safeHttpUrl(entity.url)) return entity.url.trim();
+        if (entity?.type === 'text_link' && safeHttpUrl(entity.url)) urls.add(entity.url.trim());
         if (entity?.type === 'url' && Number.isInteger(entity.offset) && Number.isInteger(entity.length)) {
           const candidate = text.slice(entity.offset, entity.offset + entity.length);
-          if (safeHttpUrl(candidate)) return candidate;
+          if (safeHttpUrl(candidate)) urls.add(trimUrlPunctuation(candidate));
         }
       }
     }
-    const match = text.match(/https?:\/\/[^\s<>"']+/iu);
-    if (match) {
+    for (const match of text.matchAll(/https?:\/\/[^\s<>"']+/giu)) {
       const candidate = trimUrlPunctuation(match[0]);
-      if (safeHttpUrl(candidate)) return candidate;
+      if (safeHttpUrl(candidate)) urls.add(candidate);
     }
   }
-  return null;
+  return [...urls];
 }
+
+export function extractMessageUrl(message) { return extractMessageUrls(message)[0] ?? null; }
 
 function channelResult(candidate, sourceKind = 'channel') {
   return { supported: true, sourceKind, needsResolution: false, candidates: [candidate] };

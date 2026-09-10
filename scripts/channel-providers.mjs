@@ -1,10 +1,16 @@
-import { ProviderError, asNonNegativeInteger, ensureMetrics, parseTikTokHtml, parseInstagramHtml } from './channel-parser-lib.mjs';
+import { ProviderError, asNonNegativeInteger, ensureMetrics, parseTikTokHtml, parseInstagramHtml, parseYouTubeHtml } from './channel-parser-lib.mjs';
 
 export async function fetchPublicProfile(channel, { fetchImpl = fetch, signal } = {}) {
-  const expected = channel.platformName === 'TikTok' ? 'tiktok.com' : 'instagram.com';
+  const expected = { TikTok: 'tiktok.com', Instagram: 'instagram.com', YouTube: 'youtube.com' }[channel.platformName];
+  if (!expected) throw new ProviderError('Нет публичного адаптера для этой площадки');
   let url = new URL(channel.url);
+  if (channel.platformName === 'YouTube') {
+    url.pathname = `${url.pathname.replace(/\/$/, '')}/about`;
+    url.search = '?hl=en';
+  }
   for (let redirects = 0; redirects <= 4; redirects++) {
-    if (url.protocol !== 'https:' || ![expected, `www.${expected}`].includes(url.hostname) || url.username || url.password || url.port) {
+    const consentRedirect = channel.platformName === 'YouTube' && url.hostname === 'consent.youtube.com';
+    if (url.protocol !== 'https:' || (!consentRedirect && ![expected, `www.${expected}`].includes(url.hostname)) || url.username || url.password || url.port) {
       throw new ProviderError('Площадка перенаправила запрос за пределы своего домена');
     }
     const response = await fetchImpl(url, { redirect: 'manual', signal,
@@ -16,6 +22,12 @@ export async function fetchPublicProfile(channel, { fetchImpl = fetch, signal } 
       url = new URL(location, url);
       if (/\/accounts\/login|\/challenge|\/checkpoint/.test(url.pathname)) throw new ProviderError('Площадка требует авторизацию владельца', 'needs_auth');
       continue;
+    }
+    // Only ordinary GET redirects may pass through consent. Never submit a form,
+    // invent cookies, or treat a consent/challenge page as channel statistics.
+    if (consentRedirect) {
+      await response.body?.cancel();
+      throw new ProviderError('YouTube требует подтверждение доступа владельцем', 'needs_auth');
     }
     if (!response.ok) {
       await response.body?.cancel();
@@ -33,7 +45,8 @@ export async function fetchPublicProfile(channel, { fetchImpl = fetch, signal } 
       html += decoder.decode(value, { stream: true });
     }
     html += decoder.decode();
-    return channel.platformName === 'TikTok' ? parseTikTokHtml(html, channel) : parseInstagramHtml(html, channel);
+    return channel.platformName === 'TikTok' ? parseTikTokHtml(html, channel)
+      : channel.platformName === 'YouTube' ? parseYouTubeHtml(html, channel) : parseInstagramHtml(html, channel);
   }
   throw new ProviderError('Слишком много перенаправлений площадки');
 }

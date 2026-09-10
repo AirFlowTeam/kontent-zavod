@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { createTelegramBotFlow } from './telegram-bot-flow.mjs';
+import { createTelegramBotFlow, homeMenu } from './telegram-bot-flow.mjs';
 import { runYtDlp } from './yt-dlp-runner.mjs';
 
 import {
@@ -134,6 +134,7 @@ async function sendMessage(chatId, text, extra = {}) {
     chat_id: chatId,
     text: clipped(text, 4_000),
     disable_web_page_preview: true,
+    ...homeMenu,
     ...extra,
   });
 }
@@ -190,7 +191,9 @@ async function processLink(chatId, user, updateId, url) {
       : `⚠️ Этот канал уже есть в платформе, но отключён. Ничего не менял.\n${channel.normalizedUrl}`);
   }
   if (channel.resultStatus === 'created') {
-    return sendMessage(chatId, `✅ Канал добавлен к «${channel.creatorName}»\n${channel.normalizedUrl}\n\nСтатистика будет собираться и обновляться автоматически.`);
+    return sendMessage(chatId, `✅ Канал добавлен к «${channel.creatorName}»\n${channel.normalizedUrl}\n\nПервые показатели появятся после проверки, затем обновляются раз в сутки. Можно прислать следующий канал.`, {
+      reply_markup: { inline_keyboard: [[{ text: 'Мои каналы', callback_data: 'menu:channels' }], [{ text: '⌂ Главное меню', callback_data: 'menu:home' }]] },
+    });
   }
   if (channel.creatorMatch) {
     return sendMessage(chatId, `✅ Этот канал уже привязан к «${channel.creatorName}»\n${channel.normalizedUrl}\n\nПовторно добавлять его не нужно.`);
@@ -218,7 +221,7 @@ async function handleUpdate(update) {
     const known = error instanceof ServiceError;
     const userMessage = known && error.userSafe
       ? error.message
-      : 'Не удалось обработать ссылку. Попробуйте ещё раз чуть позже.';
+      : 'Не удалось выполнить действие. Попробуйте ещё раз чуть позже или вернитесь в главное меню.';
     if (chatId) {
       try {
         await sendMessage(chatId, `${userMessage}${known && error.status === 422 ? '\n\nМожно сразу прислать ссылку на канал.' : ''}`);

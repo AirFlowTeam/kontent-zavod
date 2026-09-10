@@ -54,6 +54,23 @@ test('failed extraction keeps prior metrics and schedules bounded retry', async 
   assert.ok(Math.abs(Date.parse(channel.next_sync_at) - Date.now() - 15 * 60000) < 2000);
 });
 
+test('likes survive parser, history, dashboard, correction and Telegram; negative input is rejected', async (t) => {
+  const { h, storage, id } = await setup(t);
+  const [claim] = await storage.claimDueChannels();
+  const input = { channelId: id, observedAt: new Date().toISOString(), leaseToken: claim.leaseToken, parserSource: 'fixture', totalLikes: 0, totalViews: 100, publicationCount: 10 };
+  await assert.rejects(storage.completeChannelSync({ ...input, totalLikes: -1 }));
+  await storage.completeChannelSync(input);
+  assert.equal(h.sqlite.prepare('SELECT total_likes FROM channel_sync_history WHERE channel_id = ?').get(id).total_likes, 0);
+  assert.equal((await storage.getDashboardData()).channels.find((c) => c.id === id).effectiveTotalLikes, 0);
+  await storage.updateChannel({ id, totalLikesOverride: 42 });
+  assert.equal((await storage.getDashboardData()).channels.find((c) => c.id === id).effectiveTotalLikes, 42);
+  const channels = await h.load('db/telegram-onboarding.ts').listTelegramChannels({ telegramUserId: '2001' });
+  assert.equal(channels[0].totalLikes, 42);
+  await storage.updateChannel({ id, totalLikesOverride: null });
+  assert.equal((await storage.getDashboardData()).channels.find((c) => c.id === id).effectiveTotalLikes, 0);
+  await assert.rejects(storage.updateChannel({ id, totalLikesOverride: -1 }));
+});
+
 test('disabled creator, producer, channel and platform cannot be collected', async (t) => {
   const { h, storage } = await setup(t);
   for (const table of ['creators', 'producers', 'creator_channels', 'platforms']) {

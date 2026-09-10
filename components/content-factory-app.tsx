@@ -38,6 +38,8 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
+import { Input } from '@/components/ui/input';
+import { moscowToday, validateReportPeriod } from '@/lib/report-period';
 import {
   NativeSelect,
   NativeSelectOption,
@@ -74,6 +76,8 @@ type Filters = {
   creatorId: string;
   platformId: string;
   status: FilterStatus;
+  dateFrom: string;
+  dateTo: string;
 };
 
 const emptyData: DashboardData = {
@@ -122,6 +126,8 @@ function defaultFilters(): Filters {
     creatorId: '',
     platformId: '',
     status: 'active',
+    dateFrom: '',
+    dateTo: '',
   };
 }
 
@@ -151,6 +157,8 @@ export default function ContentFactoryApp() {
     null,
   );
   const [exportOpen, setExportOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
   const loadInFlightRef = useRef<Promise<void> | null>(null);
   const hasLoadedDataRef = useRef(false);
   const actionsDisabled = loading || Boolean(error);
@@ -349,6 +357,7 @@ export default function ContentFactoryApp() {
     filters.creatorId,
     filters.platformId,
     filters.status === 'active' ? '' : filters.status,
+    filters.dateFrom || filters.dateTo,
   ].filter(Boolean).length;
   const selectedChannel =
     data.channels.find((channel) => channel.id === selectedChannelId) ?? null;
@@ -467,16 +476,37 @@ export default function ContentFactoryApp() {
     ],
   );
 
-  function downloadReport() {
-    downloadGoogleSheetsReport(exportData);
-    notify(
-      'Отчёт по каналам скачан — его можно импортировать в Google Таблицы',
-    );
+  async function downloadReport() {
+    if (exporting) return false;
+    setExporting(true);
+    setExportError('');
+    try {
+      let report = exportData;
+      if (filters.dateFrom || filters.dateTo) {
+        validateReportPeriod(filters.dateFrom, filters.dateTo);
+        const query = new URLSearchParams({ from: filters.dateFrom, to: filters.dateTo });
+        const response = await fetch(`/api/report?${query}`, { cache: 'no-store', signal: AbortSignal.timeout(30000) });
+        const payload = await response.json() as DashboardData & { period: { from: string; to: string }; error?: string };
+        if (!response.ok) throw new Error(payload.error || 'Не удалось построить отчёт');
+        const ids = new Set(filteredChannels.map((channel) => channel.id));
+        const channels = payload.channels.filter((channel) => ids.has(channel.id));
+        report = { ...payload, channels, metrics: makeMetrics(channels),
+          ugc: makeMetrics(channels.filter((c) => c.creatorType === 'UGC')),
+          ai: makeMetrics(channels.filter((c) => c.creatorType === 'AI')),
+          creatorRows: buildCreatorRows(channels, payload.creators),
+          producerRows: buildProducerRows(channels, payload.producers) };
+      }
+      downloadGoogleSheetsReport(report);
+      notify('Отчёт скачан — его можно открыть в Google Таблицах');
+      return true;
+    } catch (caught) {
+      setExportError(caught instanceof Error ? caught.message : 'Не удалось скачать отчёт');
+      return false;
+    } finally { setExporting(false); }
   }
-  function beginExport() {
-    if (!actionsDisabled) {
-      downloadReport();
-      setExportOpen(true);
+  async function beginExport() {
+    if (!actionsDisabled && !exporting) {
+      if (await downloadReport()) setExportOpen(true);
     }
   }
 
@@ -545,10 +575,10 @@ export default function ContentFactoryApp() {
               variant="outline"
               className="hidden h-10 sm:inline-flex"
               onClick={beginExport}
-              disabled={actionsDisabled}
+              disabled={actionsDisabled || exporting}
             >
               <FileSpreadsheet data-icon="inline-start" /> Выгрузить в Google
-              Таблицы
+              Таблицы {exporting ? '…' : ''}
             </Button>
             <Button
               className="h-10 px-3.5 shadow-sm"
@@ -671,6 +701,7 @@ export default function ContentFactoryApp() {
               />
             </div>
           )}
+          {exportError && <Alert variant="destructive" className="mt-4"><AlertTitle>Выгрузка не создана</AlertTitle><AlertDescription>{exportError}</AlertDescription></Alert>}
           <div className="mt-6">{content}</div>
         </section>
       </div>
@@ -1012,6 +1043,17 @@ function FilterFields({
             Нужен доступ
           </NativeSelectOption>
         </NativeSelect>
+      </div>
+      <div className="space-y-3 border-t border-border/70 pt-4 lg:col-span-5">
+        <div className="flex flex-col flex-wrap gap-3 sm:flex-row sm:items-end">
+          <div className="min-w-0 space-y-2 sm:w-48"><Label htmlFor={id('from')}>Период выгрузки — с</Label>
+            <Input id={id('from')} type="date" value={filters.dateFrom} max={filters.dateTo || moscowToday()} onChange={(e) => setFilter('dateFrom', e.target.value)} /></div>
+          <div className="min-w-0 space-y-2 sm:w-48"><Label htmlFor={id('to')}>По включительно</Label>
+            <Input id={id('to')} type="date" value={filters.dateTo} min={filters.dateFrom || undefined} max={moscowToday()} onChange={(e) => setFilter('dateTo', e.target.value)} /></div>
+          <Button variant="outline" type="button" onClick={() => { setFilter('dateFrom', moscowToday(new Date(Date.now() - 6 * 86400000))); setFilter('dateTo', moscowToday()); }}>7 дней</Button>
+          <Button variant="ghost" type="button" onClick={() => { setFilter('dateFrom', ''); setFilter('dateTo', ''); }}>Текущие итоги</Button>
+        </div>
+        <p className="text-sm text-muted-foreground">Даты применяются к выгрузке: прирост просмотров, роликов и лайков по ежедневным снимкам. Время — Москва. Карточки ниже показывают текущие итоги.</p>
       </div>
     </div>
   );

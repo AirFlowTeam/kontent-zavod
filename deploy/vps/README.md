@@ -67,5 +67,30 @@ Keep the 1 GiB hard cap and OOM restart; do not restore the old MemoryHigh=768M.
 Validation: `npm test`, `npm run lint`, `npx tsc --noEmit`, then the Sites build
 helper. Tests use isolated SQLite databases and fake Telegram delivery; no real
 users receive test messages. Live public checks do not prove private access or
-future upstream availability. VK requires its API token; YouTube fallback may
-provide only subscriber counts. Private reach/analytics require owner permissions.
+future upstream availability.
+
+Period export: select inclusive dates in the filter panel. Dashboard cards remain
+current totals. Export uses the change between daily cumulative snapshots (Moscow
+UTC+3), not statistics only for videos published in that period. Both boundaries
+must have snapshots no more than 36 hours old, with matching source/type/producer.
+Unknown counters, missing history and decreases remain blank, not zero. The extra
+snapshot sheet gives exact timestamps and completeness notes. Current corrections
+do not rewrite history. Existing YouTube history retention remains 30 days.
+
+Basic metrics audit (2026-09-10, read-only live checks from the VPS):
+- YouTube public about: total views and public video count; no received-likes total.
+- RuTube profile: total views and video count; no received-likes total found.
+- TikTok profile: video count and received likes; no channel-wide view count.
+- Instagram: VPS public requests require login; media_count includes photos and
+  is deliberately not used as a video count.
+- VK: current profile API requires a token and exposes followers, not the three
+  requested video totals. Anonymous fallback failed on the checked profile.
+Full video aggregates on YouTube/VK/Instagram require additional authorized API
+integration and complete pagination; a token alone does not implement it. Do not
+sum a sample of videos or claim all three metrics work on every platform.
+
+Migration 0006 adds only likes counters and their correction/history fields.
+For the original VPS schema use `migrate-basic-metrics.py` after stopping all three
+services. It validates the prior schema and creates an exclusive SQLite backup.
+Do not rerun 0005 or the baseline migrations. Preserve the existing service env,
+TLS, Basic Auth, ports, and passwords.

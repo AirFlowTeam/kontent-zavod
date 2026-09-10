@@ -110,7 +110,10 @@ export async function getTelegramContext(input: Input) {
       WHERE c.producer_id = ? ORDER BY c.name, c.id LIMIT 100`).bind(producer.id).all()).results
     : [];
   return { role, selectedType: account.selectedType, producer, binding, creators,
-    pendingInvite: pending ? { producerName: pending.producerName, expiresAt: pending.expiresAt } : null,
+    pendingInvite: pending ? { producerName: pending.producerName, expiresAt: pending.expiresAt,
+      status: pending.redeemedBy && pending.redeemedBy !== account.telegramUserId ? 'used'
+        : pending.expiresAt <= new Date().toISOString() && !pending.redeemedBy ? 'expired'
+          : pending.producerStatus !== 'active' ? 'inactive' : 'valid' } : null,
     canSubmit: role === 'creator' && Boolean(binding?.typeConfirmedAt && binding.producerTelegramId
       && binding.creatorStatus === 'active' && binding.producerStatus === 'active') };
 }
@@ -177,6 +180,8 @@ export async function acceptTelegramInvite(input: Input) {
   const hash = await hashToken(input.token);
   const invite = await findInvite(hash);
   validInvite(invite, account.telegramUserId);
+  const ownProducer = await producerFor(account.telegramUserId);
+  if (ownProducer?.id === invite.producerId) return { ...await getTelegramContext(input), ownInvite: true };
   const linked = await creatorFor(account.telegramUserId);
   if (linked && (linked.producerId !== invite.producerId || (invite.creatorId && invite.creatorId !== linked.id))) {
     throw new TelegramStorageError('Вы уже привязаны к другому креатору или продюсеру. Перенос выполняется администратором', 409);
@@ -189,9 +194,15 @@ export async function acceptTelegramInvite(input: Input) {
 
 export async function selectTelegramCreatorType(input: Input) {
   const account = await accountFor(input);
-  if (account.role !== 'creator' && !(await creatorFor(account.telegramUserId))) throw new TelegramStorageError('Сначала выберите роль креатора', 409);
+  const linked = await creatorFor(account.telegramUserId);
+  if (account.role !== 'creator' && !(account.role === null && linked)) throw new TelegramStorageError('Сначала выберите роль креатора', 409);
+  if (!linked) {
+    if (!account.pendingInviteHash) throw new TelegramStorageError('Сначала откройте приглашение от продюсера', 409);
+    validInvite(await findInvite(account.pendingInviteHash), account.telegramUserId);
+  }
   if (input.type !== 'AI' && input.type !== 'UGC') throw new TelegramStorageError('Выберите ИИ-контент или UGC', 400);
   if (account.selectedType && account.selectedType !== input.type) throw new TelegramStorageError('Тип уже выбран. Изменить его можно через администратора', 409);
+  if (linked?.typeConfirmedAt && linked.type !== input.type) throw new TelegramStorageError('Тип этого креатора уже подтверждён. Обратитесь к администратору', 409);
   await db().prepare(`UPDATE telegram_accounts SET role = 'creator', selected_type = ?, updated_at = ?
     WHERE telegram_user_id = ? AND (selected_type IS NULL OR selected_type = ?)`)
     .bind(input.type, new Date().toISOString(), account.telegramUserId, input.type).run();
@@ -287,7 +298,10 @@ export async function listTelegramChannels(input: Input) {
     c.name AS creatorName, c.type AS creatorType, p.name AS producerName,
     t.telegram_user_id AS creatorTelegramId, t.username AS creatorTelegramUsername,
     pl.telegram_user_id AS producerTelegramId, a.username AS producerTelegramUsername,
-    ch.followers, ch.total_views AS totalViews, ch.publication_count AS publicationCount,
+    COALESCE(ch.followers_override, ch.followers) AS followers,
+    COALESCE(ch.total_views_override, ch.total_views) AS totalViews,
+    COALESCE(ch.total_likes_override, ch.total_likes) AS totalLikes,
+    COALESCE(ch.publication_count_override, ch.publication_count) AS publicationCount,
     ch.sync_status AS syncStatus, ch.sync_error AS syncError, ch.metrics_updated_at AS metricsUpdatedAt,
     ch.next_sync_at AS nextSyncAt FROM creator_channels ch
     JOIN creators c ON c.id = ch.creator_id JOIN producers p ON p.id = c.producer_id

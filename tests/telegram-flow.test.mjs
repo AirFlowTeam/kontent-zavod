@@ -31,15 +31,46 @@ test('full bot conversation: producer, personal invitation, AI creator, link, ch
   await message(2001, 'https://youtube.com/@fixture'); assert.equal(links.length, 0);
   await callback(2001, 'type:AI'); assert.match(sent.at(-1).text, /раз в сутки/);
   await message(2001, 'https://youtube.com/@fixture'); assert.equal(links.length, 1);
-  await message(2001, '/channels'); assert.match(sent.at(-1).text, /Telegram ID 1001/); assert.match(sent.at(-1).text, /Telegram ID 2001/);
+  await message(2001, '/channels'); assert.match(sent.at(-2).text, /Telegram ID 1001/); assert.match(sent.at(-2).text, /Telegram ID 2001/);
+  assert.match(sent.at(-2).text, /Просмотры:.*\nРолики:.*\nЛайки:/);
+  assert.ok(sent.at(-1).extra.reply_markup.inline_keyboard.length);
   await message(1001, '/creators'); assert.match(sent.at(-1).text, /каналов: 1/);
+  assert.ok(sent.at(-1).extra.reply_markup.inline_keyboard.some((row) => row.some((b) => b.callback_data === 'menu:home')));
   await message(1001, 'https://youtube.com/@other'); assert.equal(links.length, 1);
+  assert.match(sent.at(-1).text, /Каналы добавляет сам креатор/);
+  await message(2001, 'https://youtube.com/@first https://youtube.com/@second');
+  assert.equal(links.length, 1);
+  assert.match(sent.at(-1).text, /каждую ссылку отдельным сообщением/);
   await callback(2001, 'role:producer');
-  await callback(2001, 'role:creator'); assert.match(sent.at(-1).text, /ИИ-контент/);
+  assert.equal((await backend('context', { telegramUserId: '2001' })).role, 'creator');
+  assert.match(sent.at(-1).text, /Переключиться/);
+  await callback(2001, 'confirm-role:producer');
+  await callback(2001, 'type:UGC');
+  assert.equal((await backend('context', { telegramUserId: '2001' })).role, 'producer');
+  await callback(2001, 'role:creator');
+  await callback(2001, 'confirm-role:creator'); assert.match(sent.at(-1).text, /ИИ-контент/);
   await callback(2001, 'bind:999'); assert.match(sent.at(-1).text, /устарела/);
   const before = sent.length;
   await flow.handleMessage({ update_id: ++update, message: { from: { id: 2001 }, chat: { id: -100, type: 'group' }, text: '/start' } });
   assert.equal(sent.length, before);
+});
+
+test('creator onboarding without invite gives guidance and navigation; own invite never switches producer role', async (t) => {
+  const h = storageHarness(); t.after(h.close);
+  const f = h.load('db/telegram-onboarding.ts');
+  const sent = [];
+  const flow = createTelegramBotFlow({ backend: async (action, data) => action === 'role' ? f.selectTelegramRole(data) : f.getTelegramContext(data),
+    send: async (_, text, extra) => sent.push({ text, extra }), answerCallback: async () => {}, processLink: async () => {}, botUsername: () => 'fixture' });
+  await flow.handleCallback({ update_id: 1, callback_query: { id: '1', from: { id: 2001 }, message: { chat: { id: 2001, type: 'private' } }, data: 'role:creator' } });
+  assert.match(sent.at(-1).text, /личную ссылку/);
+  assert.ok(sent.at(-1).extra.reply_markup.inline_keyboard.length >= 2);
+  assert.equal((await f.getTelegramContext({ telegramUserId: '2001' })).selectedType, null);
+  await assert.rejects(f.selectTelegramCreatorType({ telegramUserId: '2001', type: 'AI' }), /приглашение/);
+  await f.selectTelegramRole({ telegramUserId: '1001', role: 'producer' });
+  const invite = await f.createTelegramInvite({ telegramUserId: '1001', updateId: 1 });
+  const context = await f.acceptTelegramInvite({ telegramUserId: '1001', token: invite.token });
+  assert.equal(context.ownInvite, true);
+  assert.equal(context.role, 'producer');
 });
 
 test('duplicates are idempotent and another creator cannot alter an existing channel', async (t) => {
@@ -75,12 +106,10 @@ test('occupied target invitation does not get consumed; original invite delivery
   const creatorId = Number(result.lastInsertRowid);
   const a = await f.createTelegramInvite({ telegramUserId: '1001', updateId: 1, creatorId });
   const b = await f.createTelegramInvite({ telegramUserId: '1001', updateId: 2, creatorId });
-  for (const id of ['2001', '2002']) {
-    await f.selectTelegramRole({ telegramUserId: id, role: 'creator' });
-    await f.selectTelegramCreatorType({ telegramUserId: id, type: 'UGC' });
-  }
   await f.acceptTelegramInvite({ telegramUserId: '2001', token: a.token });
+  await f.selectTelegramCreatorType({ telegramUserId: '2001', type: 'UGC' });
   assert.equal((await f.createTelegramInvite({ telegramUserId: '1001', updateId: 1, creatorId })).token, a.token);
-  await assert.rejects(f.acceptTelegramInvite({ telegramUserId: '2002', token: b.token }), /занят/);
+  await f.acceptTelegramInvite({ telegramUserId: '2002', token: b.token });
+  await assert.rejects(f.selectTelegramCreatorType({ telegramUserId: '2002', type: 'UGC' }), /занят/);
   assert.equal(h.sqlite.prepare('SELECT redeemed_by FROM telegram_invites WHERE update_id = 2').get().redeemed_by, null);
 });

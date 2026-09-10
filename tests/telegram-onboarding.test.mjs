@@ -28,7 +28,9 @@ test('producer → invitation → mandatory creator type → contacts on own cha
 test('type is selected once even with concurrent conflicting callbacks; survives role changes', async (t) => {
   const h = storageHarness(); t.after(h.close);
   const f = h.load('db/telegram-onboarding.ts');
-  await f.selectTelegramRole({ telegramUserId: '2001', role: 'creator' });
+  await f.selectTelegramRole({ telegramUserId: '1001', role: 'producer' });
+  const invitation = await f.createTelegramInvite({ telegramUserId: '1001', updateId: 1 });
+  await f.acceptTelegramInvite({ telegramUserId: '2001', token: invitation.token });
   const results = await Promise.allSettled(['UGC', 'AI'].map((type) => f.selectTelegramCreatorType({ telegramUserId: '2001', type })));
   assert.equal(results.filter((r) => r.status === 'fulfilled').length, 1);
   const context = await f.getTelegramContext({ telegramUserId: '2001' });
@@ -59,10 +61,9 @@ test('simultaneous invitation redemption cannot bind two creators', async (t) =>
   await f.selectTelegramRole({ telegramUserId: '1001', role: 'producer' });
   const invite = await f.createTelegramInvite({ telegramUserId: '1001', updateId: 1 });
   for (const id of ['2001', '2002']) {
-    await f.selectTelegramRole({ telegramUserId: id, role: 'creator' });
-    await f.selectTelegramCreatorType({ telegramUserId: id, type: 'UGC' });
+    await f.acceptTelegramInvite({ telegramUserId: id, token: invite.token });
   }
-  const results = await Promise.allSettled(['2001', '2002'].map((id) => f.acceptTelegramInvite({ telegramUserId: id, token: invite.token })));
+  const results = await Promise.allSettled(['2001', '2002'].map((id) => f.selectTelegramCreatorType({ telegramUserId: id, type: 'UGC' })));
   assert.equal(results.filter((r) => r.status === 'fulfilled').length, 1);
   assert.equal(h.sqlite.prepare('SELECT COUNT(*) AS n FROM telegram_creator_links').get().n, 1);
 });

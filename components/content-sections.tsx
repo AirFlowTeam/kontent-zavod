@@ -70,7 +70,7 @@ function EmptyState({
   );
 }
 
-function Reach30d({ value, coverage }: { value: number; coverage: number }) {
+function TotalLikes({ value, coverage }: { value: number; coverage: number }) {
   return coverage ? (
     <>{formatNumber(value)}</>
   ) : (
@@ -103,7 +103,7 @@ export function MetricCards({ metrics }: { metrics: Metrics }) {
       icon: UserRoundCheck,
     },
     {
-      label: 'Охваты каналов',
+      label: 'Просмотры',
       value: formatAvailable(metrics.totalViews, metrics.totalViewsCount),
       note: metrics.totalViewsCount
         ? `данные ${metrics.totalViewsCount} из ${metrics.channelCount}`
@@ -112,7 +112,7 @@ export function MetricCards({ metrics }: { metrics: Metrics }) {
       featured: true,
     },
     {
-      label: 'Публикаций',
+      label: 'Роликов',
       value: formatAvailable(
         metrics.publicationCount,
         metrics.publicationCountCount,
@@ -123,10 +123,10 @@ export function MetricCards({ metrics }: { metrics: Metrics }) {
       icon: Newspaper,
     },
     {
-      label: 'Охват за 30 дней',
-      value: metrics.reach30dCount ? formatNumber(metrics.reach30d) : '—',
-      note: metrics.reach30dCount
-        ? `доступно для ${formatNumber(metrics.reach30dCount)} каналов`
+      label: 'Лайки',
+      value: metrics.totalLikesCount ? formatNumber(metrics.totalLikes) : '—',
+      note: metrics.totalLikesCount
+        ? `доступно для ${formatNumber(metrics.totalLikesCount)} каналов`
         : 'площадки не передали данные',
       icon: RefreshCw,
     },
@@ -209,7 +209,7 @@ function TypeCard({
           {formatNumber(metrics.channelCount)} каналов
         </p>
         <p className="mt-1 text-[1.7rem] font-extrabold tracking-[-0.045em] tabular-nums">
-          {formatAvailable(metrics.totalViews, metrics.totalViewsCount)} охватов
+          {formatAvailable(metrics.totalViews, metrics.totalViewsCount)} просмотров
         </p>
         <div
           className={`mt-5 flex items-center justify-between border-t pt-4 text-sm ${isAI ? 'border-black/10' : 'border-white/15'}`}
@@ -383,12 +383,12 @@ export function CreatorTable({
                   <th className="px-4 py-3 text-right font-semibold">
                     Подписчики
                   </th>
-                  <th className="px-4 py-3 text-right font-semibold">Охваты</th>
+                  <th className="px-4 py-3 text-right font-semibold">Просмотры</th>
                   <th className="px-4 py-3 text-right font-semibold">
-                    30 дней
+                    Лайки
                   </th>
                   <th className="px-6 py-3 text-right font-semibold">
-                    Публикации
+                    Ролики
                   </th>
                 </tr>
               </thead>
@@ -423,9 +423,9 @@ export function CreatorTable({
                       {formatAvailable(row.totalViews, row.totalViewsCount)}
                     </td>
                     <td className="px-4 py-4 text-right tabular-nums">
-                      <Reach30d
-                        value={row.reach30d}
-                        coverage={row.reach30dCount}
+                      <TotalLikes
+                        value={row.totalLikes}
+                        coverage={row.totalLikesCount}
                       />
                     </td>
                     <td className="px-6 py-4 text-right tabular-nums">
@@ -474,7 +474,7 @@ export function CreatorTable({
                     </p>
                   </div>
                   <div>
-                    <p className="text-muted-foreground">Публикации</p>
+                    <p className="text-muted-foreground">Ролики</p>
                     <p className="mt-0.5 font-semibold tabular-nums">
                       {formatAvailable(
                         row.publicationCount,
@@ -483,11 +483,11 @@ export function CreatorTable({
                     </p>
                   </div>
                   <div>
-                    <p className="text-muted-foreground">30 дней</p>
+                    <p className="text-muted-foreground">Лайки</p>
                     <p className="mt-0.5 font-semibold tabular-nums">
-                      <Reach30d
-                        value={row.reach30d}
-                        coverage={row.reach30dCount}
+                      <TotalLikes
+                        value={row.totalLikes}
+                        coverage={row.totalLikesCount}
                       />
                     </p>
                   </div>
@@ -673,7 +673,7 @@ export function ChannelsSection({
           <p className="mt-0.5 text-xs text-muted-foreground">
             {formatNumber(metrics.channelCount)} каналов ·{' '}
             {formatAvailable(metrics.totalViews, metrics.totalViewsCount)}{' '}
-            охватов
+            просмотров
           </p>
         </div>
         <Button size="sm" onClick={onAdd}>
@@ -697,12 +697,12 @@ export function ChannelsSection({
                   <th className="px-4 py-3 text-right font-semibold">
                     Подписчики
                   </th>
-                  <th className="px-4 py-3 text-right font-semibold">Охваты</th>
+                  <th className="px-4 py-3 text-right font-semibold">Просмотры</th>
                   <th className="px-4 py-3 text-right font-semibold">
-                    30 дней
+                    Лайки
                   </th>
                   <th className="px-4 py-3 text-right font-semibold">
-                    Публикации
+                    Ролики
                   </th>
                   <th className="px-4 py-3 font-semibold">Синхронизация</th>
                   <th className="px-4 py-3 font-semibold">Свежесть</th>
@@ -743,9 +743,9 @@ export function ChannelsSection({
                         {formatChannelMetric(channelMetrics.totalViews)}
                       </td>
                       <td className="px-4 py-4 text-right tabular-nums">
-                        {channelMetrics.reach30d === null
+                        {channelMetrics.totalLikes === null
                           ? '—'
-                          : formatNumber(channelMetrics.reach30d)}
+                          : formatNumber(channelMetrics.totalLikes)}
                       </td>
                       <td className="px-4 py-4 text-right tabular-nums">
                         {formatChannelMetric(channelMetrics.publicationCount)}
@@ -853,7 +853,7 @@ export function ChannelsSection({
                       </div>
                       <div>
                         <p className="text-[10px] text-muted-foreground">
-                          Охваты
+                          Просмотры
                         </p>
                         <p className="font-bold tabular-nums">
                           {formatChannelMetric(channelMetrics.totalViews)}
@@ -861,17 +861,17 @@ export function ChannelsSection({
                       </div>
                       <div>
                         <p className="text-[10px] text-muted-foreground">
-                          30 дней
+                          Лайки
                         </p>
                         <p className="font-semibold tabular-nums">
-                          {channelMetrics.reach30d === null
+                          {channelMetrics.totalLikes === null
                             ? '—'
-                            : formatNumber(channelMetrics.reach30d)}
+                            : formatNumber(channelMetrics.totalLikes)}
                         </p>
                       </div>
                       <div>
                         <p className="text-[10px] text-muted-foreground">
-                          Публикации
+                          Ролики
                         </p>
                         <p className="font-semibold tabular-nums">
                           {formatChannelMetric(channelMetrics.publicationCount)}
@@ -948,8 +948,8 @@ export function ProducersSection({
               totalViewsCount: 0,
               publicationCount: 0,
               publicationCountCount: 0,
-              reach30d: 0,
-              reach30dCount: 0,
+              totalLikes: 0,
+              totalLikesCount: 0,
             };
             const directoryCreatorCount = creators.filter(
               (creator) => creator.producerId === producer.id,
@@ -1014,14 +1014,14 @@ export function ProducersSection({
                       </p>
                     </div>
                     <div className="border-t border-border pt-4">
-                      <p className="text-xs text-muted-foreground">Охваты</p>
+                      <p className="text-xs text-muted-foreground">Просмотры</p>
                       <p className="mt-1 text-lg font-extrabold tabular-nums">
                         {formatAvailable(row.totalViews, row.totalViewsCount)}
                       </p>
                     </div>
                     <div className="border-t border-border pt-4">
                       <p className="text-xs text-muted-foreground">
-                        Публикации
+                        Ролики
                       </p>
                       <p className="mt-1 text-lg font-extrabold tabular-nums">
                         {formatAvailable(
@@ -1032,10 +1032,10 @@ export function ProducersSection({
                     </div>
                     <div className="border-t border-border pt-4">
                       <p className="text-xs text-muted-foreground">
-                        Охват 30 дней
+                        Лайки
                       </p>
                       <p className="mt-1 text-lg font-extrabold tabular-nums">
-                        {formatAvailable(row.reach30d, row.reach30dCount)}
+                        {formatAvailable(row.totalLikes, row.totalLikesCount)}
                       </p>
                     </div>
                   </div>

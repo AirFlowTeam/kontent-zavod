@@ -113,7 +113,7 @@ export function ChannelCorrectionDialog({
   const [followers, setFollowers] = useState('');
   const [totalViews, setTotalViews] = useState('');
   const [publicationCount, setPublicationCount] = useState('');
-  const [reach30d, setReach30d] = useState('');
+  const [totalLikes, setTotalLikes] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -123,7 +123,7 @@ export function ChannelCorrectionDialog({
     setFollowers(overrideValue(channel.followersOverride));
     setTotalViews(overrideValue(channel.totalViewsOverride));
     setPublicationCount(overrideValue(channel.publicationCountOverride));
-    setReach30d(overrideValue(channel.reach30dOverride));
+    setTotalLikes(overrideValue(channel.totalLikesOverride));
     setSaving(false);
     setError('');
   }, [channel, open]);
@@ -132,7 +132,7 @@ export function ChannelCorrectionDialog({
     setFollowers('');
     setTotalViews('');
     setPublicationCount('');
-    setReach30d('');
+    setTotalLikes('');
   }
 
   async function submit(event: React.SyntheticEvent<HTMLFormElement>) {
@@ -148,7 +148,7 @@ export function ChannelCorrectionDialog({
         followersOverride: nullableNumber(followers),
         totalViewsOverride: nullableNumber(totalViews),
         publicationCountOverride: nullableNumber(publicationCount),
-        reach30dOverride: nullableNumber(reach30d),
+        totalLikesOverride: nullableNumber(totalLikes),
       });
       onClose();
     } catch (caught) {
@@ -192,7 +192,7 @@ export function ChannelCorrectionDialog({
                     </strong>
                   </span>
                   <span>
-                    Охваты
+                    Просмотры
                     <br />
                     <strong className="text-foreground">
                       {channel.totalViews === null
@@ -201,7 +201,7 @@ export function ChannelCorrectionDialog({
                     </strong>
                   </span>
                   <span>
-                    Публикации
+                    Ролики
                     <br />
                     <strong className="text-foreground">
                       {channel.publicationCount === null
@@ -210,12 +210,12 @@ export function ChannelCorrectionDialog({
                     </strong>
                   </span>
                   <span>
-                    30 дней
+                    Лайки
                     <br />
                     <strong className="text-foreground">
-                      {channel.reach30d === null
+                      {channel.totalLikes === null
                         ? '—'
-                        : formatNumber(channel.reach30d)}
+                        : formatNumber(channel.totalLikes)}
                     </strong>
                   </span>
                 </div>
@@ -254,7 +254,7 @@ export function ChannelCorrectionDialog({
                   />
                 </FormField>
                 <FormField
-                  label="Охваты канала"
+                  label="Просмотры"
                   htmlFor="override-views"
                   hint="пусто = авто"
                 >
@@ -270,7 +270,7 @@ export function ChannelCorrectionDialog({
                   />
                 </FormField>
                 <FormField
-                  label="Публикации"
+                  label="Ролики"
                   htmlFor="override-publications"
                   hint="пусто = авто"
                 >
@@ -288,7 +288,7 @@ export function ChannelCorrectionDialog({
                   />
                 </FormField>
                 <FormField
-                  label="Охват за 30 дней"
+                  label="Лайки"
                   htmlFor="override-reach"
                   hint="пусто = авто"
                 >
@@ -299,8 +299,8 @@ export function ChannelCorrectionDialog({
                     min="0"
                     step="1"
                     placeholder="Автоматически"
-                    value={reach30d}
-                    onChange={(event) => setReach30d(event.target.value)}
+                    value={totalLikes}
+                    onChange={(event) => setTotalLikes(event.target.value)}
                   />
                 </FormField>
               </div>
@@ -683,16 +683,16 @@ export function ChannelDetailDialog({
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               <MetricTile label="Подписчики" value={metrics.followers ?? '—'} />
               <MetricTile
-                label="Охваты канала"
+                label="Просмотры"
                 value={metrics.totalViews ?? '—'}
               />
               <MetricTile
-                label="Публикации"
+                label="Ролики"
                 value={metrics.publicationCount ?? '—'}
               />
               <MetricTile
-                label="Охват за 30 дней"
-                value={metrics.reach30d ?? '—'}
+                label="Лайки"
+                value={metrics.totalLikes ?? '—'}
               />
             </div>
             <div className="rounded-2xl border border-border p-4">
@@ -801,18 +801,18 @@ export function CreatorDetailDialog({
                 value={metrics.followersCount ? metrics.followers : '—'}
               />
               <MetricTile
-                label="Охваты"
+                label="Просмотры"
                 value={metrics.totalViewsCount ? metrics.totalViews : '—'}
               />
               <MetricTile
-                label="Публикации"
+                label="Ролики"
                 value={
                   metrics.publicationCountCount ? metrics.publicationCount : '—'
                 }
               />
               <MetricTile
-                label="30 дней"
-                value={metrics.reach30dCount ? metrics.reach30d : '—'}
+                label="Лайки"
+                value={metrics.totalLikesCount ? metrics.totalLikes : '—'}
               />
             </div>
             <div>
@@ -948,18 +948,18 @@ export function ProducerDetailDialog({
                 value={metrics.followersCount ? metrics.followers : '—'}
               />
               <MetricTile
-                label="Охваты"
+                label="Просмотры"
                 value={metrics.totalViewsCount ? metrics.totalViews : '—'}
               />
               <MetricTile
-                label="Публикации"
+                label="Ролики"
                 value={
                   metrics.publicationCountCount ? metrics.publicationCount : '—'
                 }
               />
               <MetricTile
-                label="30 дней"
-                value={metrics.reach30dCount ? metrics.reach30d : '—'}
+                label="Лайки"
+                value={metrics.totalLikesCount ? metrics.totalLikes : '—'}
               />
             </div>
             <div>
@@ -1034,13 +1034,13 @@ export function ExportDialog({
             Отчёт готов
           </DialogTitle>
           <DialogDescription>
-            Файл содержит 4 листа и только каналы из текущей выборки. Его можно
+            Файл содержит каналы из текущей выборки и выбранный период. При выгрузке за даты добавлен лист с исходными снимками и полнотой данных. Его можно
             открыть или импортировать в Google Таблицы.
           </DialogDescription>
         </DialogHeader>
         <Alert className="border-primary/15 bg-primary/[0.035]">
           <Sparkles />
-          <AlertTitle>Канальная аналитика</AlertTitle>
+          <AlertTitle>Просмотры, ролики и лайки</AlertTitle>
           <AlertDescription>
             Общая статистика, каналы, UGC-креаторы и AI-креаторы — только нужные
             агрегаты.

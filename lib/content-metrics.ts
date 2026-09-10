@@ -26,6 +26,7 @@ export function effectiveChannelMetrics(
   channel: Channel,
 ): ChannelEffectiveMetrics {
   return {
+    totalLikes: nullableMetricValue(channel.effectiveTotalLikes, channel.totalLikesOverride, channel.totalLikes),
     followers: nullableMetricValue(
       channel.effectiveFollowers,
       channel.followersOverride,
@@ -58,6 +59,8 @@ export function makeMetrics(channels: Channel[]): Metrics {
     followersCount: 0,
     totalViews: 0,
     totalViewsCount: 0,
+    totalLikes: 0,
+    totalLikesCount: 0,
     publicationCount: 0,
     publicationCountCount: 0,
     reach30d: 0,
@@ -66,6 +69,10 @@ export function makeMetrics(channels: Channel[]): Metrics {
 
   for (const channel of channels) {
     const metrics = effectiveChannelMetrics(channel);
+    if (metrics.totalLikes !== null) {
+      totals.totalLikes += metrics.totalLikes;
+      totals.totalLikesCount += 1;
+    }
     creatorIds.add(channel.creatorId);
     totals.channelCount += 1;
     if (metrics.followers !== null) {
@@ -97,6 +104,8 @@ function summaryMetrics(channels: Channel[]) {
     followersCount: metrics.followersCount,
     totalViews: metrics.totalViews,
     totalViewsCount: metrics.totalViewsCount,
+    totalLikes: metrics.totalLikes,
+    totalLikesCount: metrics.totalLikesCount,
     publicationCount: metrics.publicationCount,
     publicationCountCount: metrics.publicationCountCount,
     reach30d: metrics.reach30d,

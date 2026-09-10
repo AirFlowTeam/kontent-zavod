@@ -14,6 +14,7 @@ type Cell = string | number;
 type Sheet = { name: string; rows: Cell[][]; widths: number[] };
 
 export interface ReportExportData {
+  period?: { from: string; to: string };
   metrics: Metrics;
   ugc: Metrics;
   ai: Metrics;
@@ -143,8 +144,8 @@ function creatorSheet(type: 'UGC' | 'AI', rows: SummaryRow[]) {
       followersCount: result.followersCount + row.followersCount,
       views: result.views + row.totalViews,
       viewsCount: result.viewsCount + row.totalViewsCount,
-      reach30d: result.reach30d + row.reach30d,
-      reach30dCount: result.reach30dCount + row.reach30dCount,
+      totalLikes: result.totalLikes + row.totalLikes,
+      totalLikesCount: result.totalLikesCount + row.totalLikesCount,
       publications: result.publications + row.publicationCount,
       publicationsCount: result.publicationsCount + row.publicationCountCount,
     }),
@@ -154,8 +155,8 @@ function creatorSheet(type: 'UGC' | 'AI', rows: SummaryRow[]) {
       followersCount: 0,
       views: 0,
       viewsCount: 0,
-      reach30d: 0,
-      reach30dCount: 0,
+      totalLikes: 0,
+      totalLikesCount: 0,
       publications: 0,
       publicationsCount: 0,
     },
@@ -169,9 +170,9 @@ function creatorSheet(type: 'UGC' | 'AI', rows: SummaryRow[]) {
         'Продюсер',
         'Каналов',
         'Подписчики',
-        'Охваты каналов',
-        'Охват 30 дней',
-        'Публикации',
+        'Просмотры',
+        'Лайки',
+        'Ролики',
       ],
       ...matching.map((row) => [
         row.name,
@@ -179,7 +180,7 @@ function creatorSheet(type: 'UGC' | 'AI', rows: SummaryRow[]) {
         row.channelCount,
         row.followersCount ? row.followers : '',
         row.totalViewsCount ? row.totalViews : '',
-        row.reach30dCount ? row.reach30d : '',
+        row.totalLikesCount ? row.totalLikes : '',
         row.publicationCountCount ? row.publicationCount : '',
       ]),
       [
@@ -188,7 +189,7 @@ function creatorSheet(type: 'UGC' | 'AI', rows: SummaryRow[]) {
         totals.channels,
         totals.followersCount ? totals.followers : '',
         totals.viewsCount ? totals.views : '',
-        totals.reach30dCount ? totals.reach30d : '',
+        totals.totalLikesCount ? totals.totalLikes : '',
         totals.publicationsCount ? totals.publications : '',
       ],
     ],
@@ -225,6 +226,8 @@ export function createGoogleSheetsWorkbook(data: ReportExportData) {
   ).length;
   const summaryRows: Cell[][] = [
     ['Показатель', 'Значение', '', '', '', '', ''],
+    ['Период', data.period ? `${data.period.from} — ${data.period.to} включительно, Москва (UTC+3)` : 'Текущие накопленные итоги'],
+    ['Расчёт', data.period ? 'Прирост счётчиков между ежедневными снимками. Это не только просмотры новых роликов. Снимки могут отстоять от границы до 36 часов; точное время указано на листе «Снимки периода». Подписчики — на конец периода. Корректировки текущих итогов не применяются.' : 'Текущие показатели с учётом ручных корректировок. Просмотры — не уникальный охват.'],
     ['Каналов в текущей выборке', data.metrics.channelCount],
     ['Активных каналов', activeCount],
     ['Синхронизированы', successCount],
@@ -236,35 +239,37 @@ export function createGoogleSheetsWorkbook(data: ReportExportData) {
       data.metrics.followersCount ? data.metrics.followers : 'Нет данных',
     ],
     [
-      'Охваты каналов',
+      'Просмотры',
       data.metrics.totalViewsCount ? data.metrics.totalViews : 'Нет данных',
     ],
     [
-      'Публикаций',
+      'Роликов',
       data.metrics.publicationCountCount
         ? data.metrics.publicationCount
         : 'Нет данных',
     ],
     [
-      'Охват за 30 дней',
-      data.metrics.reach30dCount ? data.metrics.reach30d : 'Нет данных',
+      'Лайки',
+      data.metrics.totalLikesCount ? data.metrics.totalLikes : 'Нет данных',
     ],
-    ['Каналов с охватом за 30 дней', data.metrics.reach30dCount],
+    ['Каналов с просмотрами', data.metrics.totalViewsCount],
+    ['Каналов с числом роликов', data.metrics.publicationCountCount],
+    ['Каналов с лайками', data.metrics.totalLikesCount],
     ['UGC-креаторов', data.ugc.creatorCount],
     ['UGC-каналов', data.ugc.channelCount],
     [
-      'Охваты UGC-каналов',
+      'Просмотры UGC-каналов',
       data.ugc.totalViewsCount ? data.ugc.totalViews : 'Нет данных',
     ],
     ['AI-креаторов', data.ai.creatorCount],
     ['AI-каналов', data.ai.channelCount],
     [
-      'Охваты AI-каналов',
+      'Просмотры AI-каналов',
       data.ai.totalViewsCount ? data.ai.totalViews : 'Нет данных',
     ],
     [
       'Примечание',
-      'Метрики — effective-значения площадок с учётом явно заданных корректировок. Охват за 30 дней суммируется только по каналам, где он доступен.',
+      'Пустая ячейка означает отсутствие данных, а не ноль. Итоги — только по каналам с доступным показателем. Ролики — счётчик видео площадки; фотографии Instagram не включаются.',
     ],
     ['', '', '', '', '', '', ''],
     [
@@ -272,9 +277,9 @@ export function createGoogleSheetsWorkbook(data: ReportExportData) {
       'Креаторов',
       'Каналов',
       'Подписчики',
-      'Охваты каналов',
-      'Охват 30 дней',
-      'Публикации',
+      'Просмотры',
+      'Лайки',
+      'Ролики',
     ],
     ...data.producerRows.map((row) => [
       row.name,
@@ -282,7 +287,7 @@ export function createGoogleSheetsWorkbook(data: ReportExportData) {
       row.channelCount,
       row.followersCount ? row.followers : '',
       row.totalViewsCount ? row.totalViews : '',
-      row.reach30dCount ? row.reach30d : '',
+      row.totalLikesCount ? row.totalLikes : '',
       row.publicationCountCount ? row.publicationCount : '',
     ]),
   ];
@@ -309,9 +314,9 @@ export function createGoogleSheetsWorkbook(data: ReportExportData) {
           'Telegram креатора',
           'Telegram продюсера',
           'Подписчики',
-          'Охваты канала',
-          'Охват 30 дней',
-          'Публикации',
+          'Просмотры',
+          'Лайки',
+          'Ролики',
           'Статус канала',
           'Статус синхронизации',
           'Последняя синхронизация',
@@ -333,7 +338,7 @@ export function createGoogleSheetsWorkbook(data: ReportExportData) {
             channel.producerTelegramUsername ? `@${channel.producerTelegramUsername}` : channel.producerTelegramId ?? 'Не привязан',
             metrics.followers ?? '',
             metrics.totalViews ?? '',
-            metrics.reach30d ?? '',
+            metrics.totalLikes ?? '',
             metrics.publicationCount ?? '',
             channel.status === 'active' ? 'Активен' : 'Неактивен',
             channel.lastSyncStatus
@@ -351,6 +356,10 @@ export function createGoogleSheetsWorkbook(data: ReportExportData) {
     creatorSheet('AI', data.creatorRows),
   ];
 
+  if (data.period) sheets.push({ name: 'Снимки периода', widths: [26, 54, 26, 26, 20, 20, 20, 20, 20, 20, 80], rows: [
+    ['Креатор', 'Канал', 'Снимок начала (UTC)', 'Снимок конца (UTC)', 'Просмотры в начале', 'Просмотры в конце', 'Ролики в начале', 'Ролики в конце', 'Лайки в начале', 'Лайки в конце', 'Полнота данных'],
+    ...data.channels.map((channel) => { const p = channel.periodData; return [channel.creatorName, channel.url, p?.baselineAt ?? '', p?.endAt ?? '', p?.startViews ?? '', p?.endViews ?? '', p?.startVideos ?? '', p?.endVideos ?? '', p?.startLikes ?? '', p?.endLikes ?? '', p?.note ?? 'Истории нет']; }),
+  ] });
   return createWorkbook(sheets);
 }
 
@@ -366,7 +375,7 @@ export function downloadGoogleSheetsReport(data: ReportExportData) {
   const href = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = href;
-  link.download = `kontent-zavod-kanaly-${new Date().toISOString().slice(0, 10)}.xlsx`;
+  link.download = `kontent-zavod-${data.period ? `${data.period.from}_${data.period.to}` : `itogi-${new Date().toISOString().slice(0, 10)}`}.xlsx`;
   document.body.appendChild(link);
   link.click();
   link.remove();

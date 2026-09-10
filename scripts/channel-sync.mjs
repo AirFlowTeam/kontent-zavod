@@ -197,7 +197,10 @@ async function processChannel(channel) {
       }
     }
     if (!metrics) {
-      if (['TikTok', 'Instagram'].includes(channel.platformName)) {
+      if (channel.platformName === 'YouTube') {
+        try { metrics = await fetchPublicProfile(channel, { signal: requestSignal(35_000) }); }
+        catch (error) { console.warn(`YouTube public fallback: ${compactError(error)}`); }
+      } else if (['TikTok', 'Instagram'].includes(channel.platformName)) {
         metrics = await fetchPublicProfile(channel, { signal: requestSignal(35_000) });
       } else if (channel.platformName === 'VK') {
         metrics = await parseVkProfile(channel, { token: process.env.VK_API_TOKEN, signal: requestSignal(35_000) });

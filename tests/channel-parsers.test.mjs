@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { asNonNegativeInteger, mapYtDlpResult, parseTikTokHtml, parseInstagramHtml, ytDlpChannelUrl, classifyProviderError } from '../scripts/channel-parser-lib.mjs';
+import { asNonNegativeInteger, mapYtDlpResult, parseTikTokHtml, parseInstagramHtml, parseYouTubeHtml, ytDlpChannelUrl, classifyProviderError } from '../scripts/channel-parser-lib.mjs';
 import { fetchPublicProfile, parseVkProfile } from '../scripts/channel-providers.mjs';
 import { runYtDlp } from '../scripts/yt-dlp-runner.mjs';
 
@@ -38,10 +38,32 @@ test('TikTok exact statsV2 preferred; likes never become views', () => {
   assert.equal(result.providerChannelId, 'stable');
   assert.equal(result.totalViews, null);
 });
+test('TikTok likes are received heart count, never digg count', () => {
+  const result = parseTikTokHtml(tikHtml({ statsV2: { heart: '463434870', diggCount: '999' }, stats: { heartCount: 463000000, videoCount: 10 } }), tikChannel);
+  assert.equal(result.totalLikes, 463434870);
+  assert.equal(result.totalViews, null);
+});
+test('YouTube public about gets channel totals, not trailer views or abbreviated counts', () => {
+  const metadata = { externalId: 'UCK8sQmJBp8GCxrOtXWBpyEA', title: 'Google', vanityChannelUrl: 'http://www.youtube.com/@Google' };
+  const html = (views = '6,745,847,888 views') => `<script>var ytInitialData = ${JSON.stringify({ trailer: { viewCountText: '235,279 views' }, metadata: { channelMetadataRenderer: metadata }, tab: { aboutChannelViewModel: { viewCountText: views, videoCountText: '2,765 videos', canonicalChannelUrl: 'http://www.youtube.com/@Google' } } })};</script>`;
+  const channel = { url: 'https://youtube.com/@Google' };
+  const result = parseYouTubeHtml(html(), channel);
+  assert.equal(result.totalViews, 6745847888);
+  assert.equal(result.publicationCount, 2765);
+  assert.equal(result.totalLikes, null);
+  assert.equal(parseYouTubeHtml(html('6.7B views'), channel).totalViews, null);
+  assert.throws(() => parseYouTubeHtml(html(), { url: 'https://youtube.com/@other' }), /имя/);
+  assert.throws(() => parseYouTubeHtml(html(), { ...channel, providerChannelId: 'other' }), /другой/);
+});
+test('Instagram media count containing photos is not a video count', () => {
+  const result = parseInstagramHtml(instagram({ all_media_count: 42, media_count: 42 }), { url: 'https://instagram.com/fixture' });
+  assert.equal(result.publicationCount, null);
+});
 test('TikTok wrong profile, private and malformed response fail explicitly', () => {
   assert.throws(() => parseTikTokHtml(tikHtml({ user: { uniqueId: 'other' } }), tikChannel), /другой/);
   assert.throws(() => parseTikTokHtml(tikHtml({ user: { uniqueId: 'fixture', privateAccount: true } }), tikChannel), (e) => classifyProviderError(e) === 'needs_auth');
   assert.throws(() => parseTikTokHtml('<html>blocked</html>', tikChannel));
+  assert.throws(() => parseTikTokHtml(tikHtml(), { ...tikChannel, providerChannelId: 'previous-owner' }), /владелец/);
 });
 test('Instagram exact matching profile and stable pk; unknown is not zero', () => {
   const result = parseInstagramHtml(instagram({ username: 'other', follower_count: 10 }) + instagram({}), { url: 'https://instagram.com/fixture' });
@@ -49,6 +71,26 @@ test('Instagram exact matching profile and stable pk; unknown is not zero', () =
   assert.equal(result.followers, 0);
   assert.equal(result.publicationCount, null);
   assert.throws(() => parseInstagramHtml(instagram({ is_private: true }), { url: 'https://instagram.com/fixture' }), (e) => classifyProviderError(e) === 'needs_auth');
+  assert.throws(() => parseInstagramHtml(instagram({}), { url: 'https://instagram.com/fixture', providerChannelId: 'other-owner' }), /владелец/);
+});
+
+test('YouTube about identity must match metadata; consent allows only ordinary GET redirects', async () => {
+  const id = 'UCK8sQmJBp8GCxrOtXWBpyEA';
+  const html = (aboutId = id) => `var ytInitialData = ${JSON.stringify({ metadata: { channelMetadataRenderer: { externalId: id, vanityChannelUrl: 'https://youtube.com/@Google' } }, about: { aboutChannelViewModel: { canonicalChannelUrl: `https://youtube.com/channel/${aboutId}`, viewCountText: '100 views', videoCountText: '10 videos' } } })};`;
+  const channel = { platformName: 'YouTube', url: 'https://youtube.com/@Google' };
+  assert.throws(() => parseYouTubeHtml(html('UC0000000000000000000000'), channel), /другому/);
+  let calls = 0;
+  const result = await fetchPublicProfile(channel, { fetchImpl: async (url, init) => {
+    assert.equal(init.method, undefined); assert.equal(init.headers.cookie, undefined);
+    calls++;
+    if (calls === 1) return new Response('', { status: 302, headers: { location: 'https://consent.youtube.com/m' } });
+    if (calls === 2) return new Response('', { status: 303, headers: { location: 'https://youtube.com/@Google/about?hl=en' } });
+    return new Response(html());
+  } });
+  assert.equal(calls, 3); assert.equal(result.totalViews, 100);
+  let blockedCalls = 0;
+  await assert.rejects(fetchPublicProfile(channel, { fetchImpl: async () => ++blockedCalls === 1
+    ? new Response('', { status: 302, headers: { location: 'https://consent.youtube.com/m' } }) : new Response('<form>consent required</form>') }), (e) => classifyProviderError(e) === 'needs_auth');
 });
 test('profile HTTP redirects remain within expected HTTPS domain', async () => {
   for (const location of ['https://attacker.example/fixture', 'http://tiktok.com/@fixture', 'https://www.tiktok.com:8443/@fixture']) {

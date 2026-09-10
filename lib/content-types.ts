@@ -32,6 +32,7 @@ export interface Creator {
 }
 
 export interface Channel {
+  periodData?: import('@/lib/report-period').ChannelPeriod;
   id: number;
   creatorId: number;
   creatorName: string;
@@ -53,14 +54,17 @@ export interface Channel {
   status: RecordStatus;
   followers: number | null;
   totalViews: number | null;
+  totalLikes: number | null;
   publicationCount: number | null;
   reach30d: number | null;
   followersOverride: number | null;
   totalViewsOverride: number | null;
+  totalLikesOverride: number | null;
   publicationCountOverride: number | null;
   reach30dOverride: number | null;
   effectiveFollowers: number | null;
   effectiveTotalViews: number | null;
+  effectiveTotalLikes: number | null;
   effectivePublicationCount: number | null;
   effectiveReach30d: number | null;
   lastSyncAt: string | null;
@@ -82,6 +86,7 @@ export interface DashboardData {
 export interface ChannelEffectiveMetrics {
   followers: number | null;
   totalViews: number | null;
+  totalLikes: number | null;
   publicationCount: number | null;
   reach30d: number | null;
 }
@@ -97,6 +102,8 @@ export interface SummaryRow {
   followersCount: number;
   totalViews: number;
   totalViewsCount: number;
+  totalLikes: number;
+  totalLikesCount: number;
   publicationCount: number;
   publicationCountCount: number;
   reach30d: number;
@@ -110,6 +117,8 @@ export interface Metrics {
   followersCount: number;
   totalViews: number;
   totalViewsCount: number;
+  totalLikes: number;
+  totalLikesCount: number;
   publicationCount: number;
   publicationCountCount: number;
   reach30d: number;
