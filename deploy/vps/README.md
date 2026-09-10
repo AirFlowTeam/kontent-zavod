@@ -57,6 +57,8 @@ Extract release archives with `--no-same-owner`. Before startup, create writable
 `.wrangler` and `dist/server/.wrangler/tmp` directories in the new release,
 owned by `kontentzavod:kontentzavod` (0750). The remaining source can stay read-only.
 Do not regard `systemctl is-active` as readiness: verify `/api/data` and logs too.
+On macOS, package with `tar --no-mac-metadata --no-xattrs --no-fflags` so generated
+AppleDouble `._*.js` sidecars cannot be mistaken for Worker JavaScript modules.
 
 `memory-resilience.conf` is a drop-in for this app service only. A low soft memory
 limit previously left workerd indefinitely throttled instead of restarting.
