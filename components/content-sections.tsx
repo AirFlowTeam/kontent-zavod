@@ -1,5 +1,7 @@
 'use client';
 
+import { ChannelContacts } from '@/components/channel-contacts';
+
 import {
   AlertTriangle,
   ArrowRight,
@@ -726,6 +728,7 @@ export function ChannelsSection({
                       </td>
                       <td className="px-4 py-4">
                         <p className="font-semibold">{channel.creatorName}</p>
+                        <ChannelContacts channel={channel} />
                         <div className="mt-1 flex items-center gap-2">
                           <TypeBadge type={channel.creatorType} />
                           <span className="text-xs text-muted-foreground">
@@ -824,6 +827,7 @@ export function ChannelsSection({
                       <Pencil />
                     </Button>
                   </div>
+                  <ChannelContacts channel={channel} />
                   <button
                     type="button"
                     onClick={() => onChannel(channel)}

@@ -1,12 +1,12 @@
 'use client';
 
+import { ChannelContacts } from '@/components/channel-contacts';
+
 import { useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle,
-  CheckCircle2,
   ExternalLink,
   FileSpreadsheet,
-  Link2,
   Pencil,
   RotateCcw,
   Sparkles,
@@ -36,7 +36,6 @@ import {
   NativeSelectOption,
 } from '@/components/ui/native-select';
 import {
-  detectPlatformId,
   effectiveChannelMetrics,
   formatDateTime,
   formatNumber,
@@ -78,266 +77,17 @@ function FormField({
   );
 }
 
-export function ChannelDialog({
-  open,
-  onClose,
-  data,
-  mutate,
-}: {
-  open: boolean;
-  onClose: () => void;
-  data: DashboardData;
-  mutate: Mutate;
-}) {
-  const [mode, setMode] = useState<'existing' | 'new'>('existing');
-  const [creatorId, setCreatorId] = useState('');
-  const [url, setUrl] = useState('');
-  const [newCreatorName, setNewCreatorName] = useState('');
-  const [newCreatorType, setNewCreatorType] = useState<Creator['type']>('UGC');
-  const [newCreatorProducerId, setNewCreatorProducerId] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-
-  const activeCreators = useMemo(
-    () => data.creators.filter((creator) => creator.status === 'active'),
-    [data.creators],
-  );
-  const activeProducers = useMemo(
-    () => data.producers.filter((producer) => producer.status === 'active'),
-    [data.producers],
-  );
-  const detectedPlatformId = detectPlatformId(url, data.platforms);
-  const detectedPlatform = data.platforms.find(
-    (platform) => platform.id === detectedPlatformId,
-  );
-
-  useEffect(() => {
-    if (!open) return;
-    setMode(activeCreators.length ? 'existing' : 'new');
-    setCreatorId(String(activeCreators[0]?.id ?? ''));
-    setUrl('');
-    setNewCreatorName('');
-    setNewCreatorType('UGC');
-    setNewCreatorProducerId(String(activeProducers[0]?.id ?? ''));
-    setSaving(false);
-    setError('');
-  }, [activeCreators, activeProducers, open]);
-
-  const canSubmit =
-    Boolean(url.trim()) &&
-    (mode === 'existing' ? Boolean(creatorId) : Boolean(newCreatorProducerId));
-
-  async function submit(event: React.SyntheticEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setSaving(true);
-    setError('');
-    try {
-      await mutate(
-        mode === 'existing'
-          ? {
-              action: 'createChannel',
-              url: url.trim(),
-              creatorId: Number(creatorId),
-            }
-          : {
-              action: 'createChannel',
-              url: url.trim(),
-              newCreatorName: newCreatorName.trim() || undefined,
-              newCreatorType,
-              newCreatorProducerId: Number(newCreatorProducerId),
-            },
-      );
-      onClose();
-    } catch (caught) {
-      setError(
-        caught instanceof Error
-          ? caught.message
-          : 'Не удалось подключить канал',
-      );
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
-      <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-[580px]">
-        <DialogHeader>
-          <div className="grid size-11 place-items-center rounded-2xl bg-primary/10 text-primary">
-            <Link2 className="size-5" />
-          </div>
-          <DialogTitle className="mt-2 text-xl font-extrabold tracking-[-0.03em]">
-            Добавить канал
-          </DialogTitle>
-          <DialogDescription>
-            Вставьте ссылку на профиль или канал. Показатели публикаций и
-            аудитории загрузятся автоматически.
-          </DialogDescription>
-        </DialogHeader>
-        <form onSubmit={submit} className="space-y-5">
-          <FormField
-            label="Ссылка на канал"
-            htmlFor="channel-url"
-            hint="обязательное поле"
-          >
-            <Input
-              id="channel-url"
-              type="url"
-              inputMode="url"
-              autoComplete="url"
-              placeholder="https://…"
-              value={url}
-              onChange={(event) => setUrl(event.target.value)}
-              required
-            />
-          </FormField>
-          {url && (
-            <div className="flex items-center gap-2 rounded-xl border border-border bg-muted/40 px-3 py-2 text-xs">
-              {detectedPlatform ? (
-                <>
-                  <CheckCircle2 className="size-4 text-emerald-600" />
-                  <span>
-                    Площадка распознана:{' '}
-                    <strong>{detectedPlatform.name}</strong>
-                  </span>
-                </>
-              ) : (
-                <>
-                  <Sparkles className="size-4 text-primary" />
-                  <span className="text-muted-foreground">
-                    Площадка будет определена при подключении
-                  </span>
-                </>
-              )}
-            </div>
-          )}
-          <div>
-            <p className="mb-2 text-xs font-bold text-muted-foreground">
-              Привязать канал
-            </p>
-            <div className="grid grid-cols-2 rounded-xl bg-muted p-1">
-              <button
-                type="button"
-                aria-pressed={mode === 'existing'}
-                disabled={!activeCreators.length}
-                onClick={() => setMode('existing')}
-                className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${mode === 'existing' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground'} disabled:cursor-not-allowed disabled:opacity-40`}
-              >
-                К креатору
-              </button>
-              <button
-                type="button"
-                aria-pressed={mode === 'new'}
-                disabled={!activeProducers.length}
-                onClick={() => setMode('new')}
-                className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${mode === 'new' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground'} disabled:cursor-not-allowed disabled:opacity-40`}
-              >
-                Новый креатор
-              </button>
-            </div>
-          </div>
-          {mode === 'existing' ? (
-            activeCreators.length ? (
-              <FormField label="Креатор" htmlFor="channel-creator">
-                <NativeSelect
-                  id="channel-creator"
-                  className="w-full"
-                  value={creatorId}
-                  onChange={(event) => setCreatorId(event.target.value)}
-                  required
-                >
-                  {activeCreators.map((creator) => (
-                    <NativeSelectOption key={creator.id} value={creator.id}>
-                      {creator.name} · {creator.type} · {creator.producerName}
-                    </NativeSelectOption>
-                  ))}
-                </NativeSelect>
-              </FormField>
-            ) : (
-              <Alert>
-                <AlertCircle />
-                <AlertTitle>Нет активных креаторов</AlertTitle>
-                <AlertDescription>
-                  Создайте креатора одновременно с каналом.
-                </AlertDescription>
-              </Alert>
-            )
-          ) : activeProducers.length ? (
-            <div className="space-y-4 rounded-2xl border border-border bg-muted/30 p-4">
-              <FormField
-                label="Имя / название"
-                htmlFor="new-creator-name"
-                hint="необязательно"
-              >
-                <Input
-                  id="new-creator-name"
-                  value={newCreatorName}
-                  onChange={(event) => setNewCreatorName(event.target.value)}
-                  placeholder="Если пусто — возьмём с площадки"
-                />
-              </FormField>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <FormField label="Тип" htmlFor="new-creator-type">
-                  <NativeSelect
-                    id="new-creator-type"
-                    className="w-full"
-                    value={newCreatorType}
-                    onChange={(event) =>
-                      setNewCreatorType(event.target.value as Creator['type'])
-                    }
-                  >
-                    <NativeSelectOption value="UGC">UGC</NativeSelectOption>
-                    <NativeSelectOption value="AI">AI</NativeSelectOption>
-                  </NativeSelect>
-                </FormField>
-                <FormField label="Продюсер" htmlFor="new-creator-producer">
-                  <NativeSelect
-                    id="new-creator-producer"
-                    className="w-full"
-                    value={newCreatorProducerId}
-                    onChange={(event) =>
-                      setNewCreatorProducerId(event.target.value)
-                    }
-                    required
-                  >
-                    {activeProducers.map((producer) => (
-                      <NativeSelectOption key={producer.id} value={producer.id}>
-                        {producer.name}
-                      </NativeSelectOption>
-                    ))}
-                  </NativeSelect>
-                </FormField>
-              </div>
-            </div>
-          ) : (
-            <Alert variant="destructive">
-              <AlertCircle />
-              <AlertTitle>Нет активных продюсеров</AlertTitle>
-              <AlertDescription>
-                Новый креатор должен быть закреплён за продюсером. Активируйте
-                продюсера или выберите существующего креатора.
-              </AlertDescription>
-            </Alert>
-          )}
-          {error && (
-            <Alert variant="destructive">
-              <AlertCircle />
-              <AlertTitle>Не удалось подключить канал</AlertTitle>
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          )}
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={onClose}>
-              Отмена
-            </Button>
-            <Button type="submit" disabled={saving || !canSubmit}>
-              {saving ? 'Подключаем…' : 'Добавить канал'}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
+export function ChannelDialog({ open, onClose }: { open: boolean; onClose: () => void; data: DashboardData; mutate: Mutate }) {
+  return <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
+    <DialogContent>
+      <DialogHeader>
+        <DialogTitle>Добавить канал через Telegram</DialogTitle>
+        <DialogDescription>Каналы добавляются из аккаунта креатора, чтобы сохранить его Telegram, продюсера и общий тип контента.</DialogDescription>
+      </DialogHeader>
+      <p className="text-sm leading-relaxed">Продюсер создаёт приглашение в боте. Креатор открывает его, один раз выбирает ИИ / UGC и отправляет ссылку на свой канал или видео. Показатели обновляются автоматически раз в сутки.</p>
+      <a className="rounded-xl bg-primary px-4 py-3 text-center font-semibold text-primary-foreground" href="https://t.me/contentlsbot" target="_blank" rel="noopener noreferrer">Открыть @contentlsbot</a>
+    </DialogContent>
+  </Dialog>;
 }
 
 function overrideValue(value: number | null) {
@@ -903,6 +653,7 @@ export function ChannelDetailDialog({
                   <DialogDescription className="mt-1">
                     {channel.creatorName} · {channel.producerName}
                   </DialogDescription>
+                  <ChannelContacts channel={channel} />
                 </div>
                 <Button
                   variant="outline"

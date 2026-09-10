@@ -1,6 +1,8 @@
 import { env } from 'cloudflare:workers';
 
 import { ensureDatabase, normalizeChannelUrl } from '@/db/storage';
+import { TelegramStorageError, requireTelegramCreatorReady } from '@/db/telegram-onboarding';
+export { TelegramStorageError } from '@/db/telegram-onboarding';
 
 type CreatorType = 'UGC' | 'AI';
 type SourceKind = 'channel' | 'video';
@@ -36,13 +38,6 @@ type SubmissionRow = ChannelRow & {
   resultStatus: SubmissionStatus;
 };
 
-export class TelegramStorageError extends Error {
-  constructor(message: string, readonly statusCode: number) {
-    super(message);
-    this.name = 'TelegramStorageError';
-  }
-}
-
 function database() {
   if (!env.DB) throw new Error('База данных временно недоступна');
   return env.DB;
@@ -60,14 +55,6 @@ function telegramId(value: unknown, label: string, allowNegative = false) {
   const pattern = allowNegative ? /^-?[1-9]\d{0,19}$/ : /^[1-9]\d{0,19}$/;
   if (!pattern.test(candidate)) throw new TelegramStorageError(`Некорректное поле «${label}»`, 400);
   return candidate;
-}
-
-function positiveInteger(value: unknown, label: string) {
-  const parsed = typeof value === 'number' || typeof value === 'string' ? Number(value) : Number.NaN;
-  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
-    throw new TelegramStorageError(`Некорректное поле «${label}»`, 400);
-  }
-  return parsed;
 }
 
 function updateId(value: unknown) {
@@ -105,10 +92,6 @@ function sourceKind(value: unknown): SourceKind {
     throw new TelegramStorageError('Тип ссылки должен быть channel или video', 400);
   }
   return value;
-}
-
-function publicCreator(row: CreatorRow) {
-  return { id: row.id, name: row.name, type: row.type, producerName: row.producerName };
 }
 
 function publicChannel(row: ChannelRow, submittedCreatorId: number, status: SubmissionStatus, idempotent = false) {
@@ -188,59 +171,6 @@ async function recordExisting(
   return publicChannel(recorded, recorded.submittedCreatorId, recorded.resultStatus, !insertion.meta.changes);
 }
 
-export async function getTelegramContext(inputValue: unknown) {
-  const input = record(inputValue);
-  const telegramUserId = telegramId(input.telegramUserId, 'Пользователь Telegram');
-  await ensureDatabase();
-  const binding = database();
-  const [linked, creators] = await Promise.all([
-    binding.prepare(`SELECT c.id, c.name, c.type, p.name AS producerName,
-      c.status AS creatorStatus, p.status AS producerStatus
-      FROM telegram_creator_links t
-      JOIN creators c ON c.id = t.creator_id
-      JOIN producers p ON p.id = c.producer_id
-      WHERE t.telegram_user_id = ?`).bind(telegramUserId).first<BindingRow>(),
-    binding.prepare(`SELECT c.id, c.name, c.type, p.name AS producerName
-      FROM creators c JOIN producers p ON p.id = c.producer_id
-      WHERE c.status = 'active' AND p.status = 'active'
-      ORDER BY c.name COLLATE NOCASE, c.id`).all<CreatorRow>(),
-  ]);
-  const activeBinding = linked?.creatorStatus === 'active' && linked.producerStatus === 'active'
-    ? publicCreator(linked)
-    : null;
-  return { binding: activeBinding, creators: creators.results.map(publicCreator) };
-}
-
-export async function bindTelegramCreator(inputValue: unknown) {
-  const input = record(inputValue);
-  const telegramUserId = telegramId(input.telegramUserId, 'Пользователь Telegram');
-  const chatId = telegramId(input.chatId, 'Чат Telegram', true);
-  if (chatId !== telegramUserId) throw new TelegramStorageError('Привязка доступна только в личном чате с ботом', 400);
-  const creatorId = positiveInteger(input.creatorId, 'Креатор');
-  const username = optionalText(input.username, 'Имя пользователя', 64);
-  const displayName = optionalText(input.displayName, 'Имя', 160);
-  await ensureDatabase();
-  const binding = database();
-  const creator = await binding.prepare(`SELECT c.id, c.name, c.type, p.name AS producerName
-    FROM creators c JOIN producers p ON p.id = c.producer_id
-    WHERE c.id = ? AND c.status = 'active' AND p.status = 'active'`)
-    .bind(creatorId).first<CreatorRow>();
-  if (!creator) throw new TelegramStorageError('Креатор не найден или отключён', 404);
-  const now = new Date().toISOString();
-  await binding.prepare(`INSERT INTO telegram_creator_links
-    (telegram_user_id, creator_id, chat_id, username, display_name, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(telegram_user_id) DO UPDATE SET
-      creator_id = excluded.creator_id,
-      chat_id = excluded.chat_id,
-      username = excluded.username,
-      display_name = excluded.display_name,
-      updated_at = excluded.updated_at`)
-    .bind(telegramUserId, creatorId, chatId, username, displayName, now, now)
-    .run();
-  return publicCreator(creator);
-}
-
 export async function submitTelegramChannel(inputValue: unknown) {
   const input = record(inputValue);
   const telegramUserId = telegramId(input.telegramUserId, 'Пользователь Telegram');
@@ -251,6 +181,7 @@ export async function submitTelegramChannel(inputValue: unknown) {
   await ensureDatabase();
   const binding = database();
 
+  await requireTelegramCreatorReady(telegramUserId);
   const previous = await findSubmission(binding, telegramUpdateId);
   if (previous) {
     if (previous.telegramUserId !== telegramUserId) {
@@ -290,6 +221,7 @@ export async function submitTelegramChannel(inputValue: unknown) {
     sourceKind: submittedSourceKind,
   };
   if (existing) {
+    if (existing.creatorId !== linked.id) return recordExisting(binding, submission, existing);
     if (submittedProviderChannelId && existing.providerChannelId
       && existing.providerChannelId !== submittedProviderChannelId) {
       throw new TelegramStorageError('Ссылка не совпадает с ранее определённым ID канала', 409);
@@ -298,8 +230,8 @@ export async function submitTelegramChannel(inputValue: unknown) {
       await binding.prepare(`UPDATE creator_channels SET
         provider_channel_id = COALESCE(provider_channel_id, ?),
         handle = COALESCE(handle, ?), updated_at = ?
-        WHERE id = ?`)
-        .bind(submittedProviderChannelId, submittedHandle, new Date().toISOString(), existing.id).run();
+        WHERE id = ? AND creator_id = ?`)
+        .bind(submittedProviderChannelId, submittedHandle, new Date().toISOString(), existing.id, linked.id).run();
     }
     return recordExisting(binding, submission, existing);
   }

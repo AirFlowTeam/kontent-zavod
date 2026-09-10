@@ -38,6 +38,10 @@ export interface Channel {
   creatorType: CreatorType;
   producerId: number;
   producerName: string;
+  creatorTelegramId: string | null;
+  creatorTelegramUsername: string | null;
+  producerTelegramId: string | null;
+  producerTelegramUsername: string | null;
   platformId: number;
   platformName: string;
   url: string;

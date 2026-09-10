@@ -37,7 +37,8 @@ CapabilityBoundingSet=
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 ReadWritePaths=/var/lib/kontent-zavod/state /opt/kontent-zavod/current
 
-MemoryHigh=768M
+MemoryHigh=infinity
+OOMPolicy=kill
 MemoryMax=1024M
 TasksMax=96
 LimitNOFILE=8192

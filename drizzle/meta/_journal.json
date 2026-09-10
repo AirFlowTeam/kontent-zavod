@@ -36,6 +36,13 @@
       "when": 1788866349730,
       "tag": "0004_mixed_beyonder",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1789042523484,
+      "tag": "0005_lyrical_invaders",
+      "breakpoints": true
     }
   ]
 }

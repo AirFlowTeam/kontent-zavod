@@ -200,6 +200,7 @@ export const telegramCreatorLinks = sqliteTable(
     chatId: text('chat_id').notNull(),
     username: text('username'),
     displayName: text('display_name'),
+    typeConfirmedAt: text('type_confirmed_at'),
     createdAt: text('created_at').notNull(),
     updatedAt: text('updated_at').notNull(),
   },
@@ -232,3 +233,39 @@ export const telegramSubmissions = sqliteTable(
     check('chk_telegram_submissions_result_status', sql`${table.resultStatus} IN ('created', 'existing')`),
   ],
 );
+
+export const telegramAccounts = sqliteTable('telegram_accounts', {
+  telegramUserId: text('telegram_user_id').primaryKey(),
+  chatId: text('chat_id').notNull(),
+  username: text('username'),
+  displayName: text('display_name'),
+  role: text('role', { enum: ['producer', 'creator'] }),
+  selectedType: text('selected_type', { enum: ['UGC', 'AI'] }),
+  pendingInviteHash: text('pending_invite_hash'),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+}, (table) => [
+  check('chk_telegram_accounts_role', sql`${table.role} IS NULL OR ${table.role} IN ('producer', 'creator')`),
+  check('chk_telegram_accounts_type', sql`${table.selectedType} IS NULL OR ${table.selectedType} IN ('UGC', 'AI')`),
+]);
+
+export const telegramProducerLinks = sqliteTable('telegram_producer_links', {
+  telegramUserId: text('telegram_user_id').primaryKey().references(() => telegramAccounts.telegramUserId),
+  producerId: integer('producer_id').notNull().references(() => producers.id),
+  createdAt: text('created_at').notNull(),
+}, (table) => [uniqueIndex('idx_telegram_producer_links_producer').on(table.producerId)]);
+
+export const telegramInvites = sqliteTable('telegram_invites', {
+  tokenHash: text('token_hash').primaryKey(),
+  producerId: integer('producer_id').notNull().references(() => producers.id),
+  creatorId: integer('creator_id').references(() => creators.id),
+  createdBy: text('created_by').notNull().references(() => telegramAccounts.telegramUserId),
+  updateId: integer('update_id').notNull(),
+  expiresAt: text('expires_at').notNull(),
+  redeemedBy: text('redeemed_by'),
+  redeemedAt: text('redeemed_at'),
+  createdAt: text('created_at').notNull(),
+}, (table) => [
+  uniqueIndex('idx_telegram_invites_update').on(table.createdBy, table.updateId),
+  index('idx_telegram_invites_producer').on(table.producerId, table.createdAt),
+]);

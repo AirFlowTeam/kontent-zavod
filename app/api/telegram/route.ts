@@ -1,9 +1,9 @@
 import {
-  bindTelegramCreator,
-  getTelegramContext,
   submitTelegramChannel,
   TelegramStorageError,
 } from '@/db/telegram';
+import { getTelegramContext, selectTelegramRole, createTelegramInvite, acceptTelegramInvite,
+  selectTelegramCreatorType, listTelegramChannels } from '@/db/telegram-onboarding';
 import { authorizeSyncRequest } from '@/lib/server/sync-auth';
 
 export const dynamic = 'force-dynamic';
@@ -55,9 +55,13 @@ export async function POST(request: Request) {
       return json({ ok: true, ...context });
     }
     if (action === 'bind') {
-      const binding = await bindTelegramCreator(body);
-      return json({ ok: true, binding });
+      return json({ error: 'Выбор чужого профиля отключён. Используйте персональное приглашение продюсера' }, 403);
     }
+    if (action === 'role') return json({ ok: true, ...await selectTelegramRole(body) });
+    if (action === 'invite') return json({ ok: true, invite: await createTelegramInvite(body) });
+    if (action === 'acceptInvite') return json({ ok: true, ...await acceptTelegramInvite(body) });
+    if (action === 'selectType') return json({ ok: true, ...await selectTelegramCreatorType(body) });
+    if (action === 'channels') return json({ ok: true, channels: await listTelegramChannels(body) });
     if (action === 'submit') {
       const channel = await submitTelegramChannel(body);
       return json({ ok: true, channel }, channel.resultStatus === 'created' && !channel.idempotent ? 201 : 200);

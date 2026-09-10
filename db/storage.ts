@@ -7,149 +7,6 @@ type ChannelSyncStatus = 'pending' | 'success' | 'error' | 'needs_auth';
 type ChannelSyncFailureStatus = Extract<ChannelSyncStatus, 'error' | 'needs_auth'>;
 type SupportedPlatformName = 'YouTube' | 'RuTube' | 'VK' | 'TikTok' | 'Instagram';
 
-const schemaStatements = [
-  `CREATE TABLE IF NOT EXISTS app_meta (
-    key TEXT PRIMARY KEY NOT NULL,
-    value TEXT NOT NULL
-  )`,
-  `CREATE TABLE IF NOT EXISTS producers (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
-    created_at TEXT NOT NULL
-  )`,
-  `CREATE UNIQUE INDEX IF NOT EXISTS idx_producers_name ON producers (name)`,
-  `CREATE TABLE IF NOT EXISTS platforms (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    domains TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive'))
-  )`,
-  `CREATE UNIQUE INDEX IF NOT EXISTS idx_platforms_name ON platforms (name)`,
-  `CREATE TABLE IF NOT EXISTS creators (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    type TEXT NOT NULL CHECK (type IN ('UGC', 'AI')),
-    producer_id INTEGER NOT NULL REFERENCES producers(id),
-    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
-    created_at TEXT NOT NULL
-  )`,
-  `CREATE UNIQUE INDEX IF NOT EXISTS idx_creators_name ON creators (name)`,
-  `CREATE INDEX IF NOT EXISTS idx_creators_producer_id ON creators (producer_id)`,
-  `CREATE TABLE IF NOT EXISTS videos (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    creator_id INTEGER NOT NULL REFERENCES creators(id),
-    platform_id INTEGER NOT NULL REFERENCES platforms(id),
-    url TEXT NOT NULL,
-    normalized_url TEXT NOT NULL,
-    published_at TEXT NOT NULL,
-    added_at TEXT NOT NULL,
-    reach INTEGER NOT NULL DEFAULT 0 CHECK (reach >= 0),
-    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'deleted', 'error')),
-    creator_type_snapshot TEXT NOT NULL CHECK (creator_type_snapshot IN ('UGC', 'AI')),
-    producer_id_snapshot INTEGER NOT NULL
-  )`,
-  `CREATE UNIQUE INDEX IF NOT EXISTS idx_videos_normalized_url ON videos (normalized_url)`,
-  `CREATE INDEX IF NOT EXISTS idx_videos_creator_id ON videos (creator_id)`,
-  `CREATE INDEX IF NOT EXISTS idx_videos_platform_id ON videos (platform_id)`,
-  `CREATE INDEX IF NOT EXISTS idx_videos_status_published_at ON videos (status, published_at)`,
-  `CREATE TABLE IF NOT EXISTS video_url_aliases (
-    canonical_url TEXT PRIMARY KEY NOT NULL,
-    video_id INTEGER NOT NULL REFERENCES videos(id)
-  )`,
-  `CREATE INDEX IF NOT EXISTS idx_video_url_aliases_video_id ON video_url_aliases (video_id)`,
-  `CREATE TABLE IF NOT EXISTS reach_history (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    video_id INTEGER NOT NULL REFERENCES videos(id),
-    reach INTEGER NOT NULL CHECK (reach >= 0),
-    recorded_at TEXT NOT NULL
-  )`,
-  `CREATE INDEX IF NOT EXISTS idx_reach_history_video_id ON reach_history (video_id)`,
-  `CREATE TABLE IF NOT EXISTS creator_channels (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    creator_id INTEGER NOT NULL REFERENCES creators(id),
-    platform_id INTEGER NOT NULL REFERENCES platforms(id),
-    url TEXT NOT NULL,
-    normalized_url TEXT NOT NULL,
-    provider_channel_id TEXT,
-    handle TEXT,
-    title TEXT,
-    avatar_url TEXT,
-    followers INTEGER CHECK (followers IS NULL OR followers >= 0),
-    total_views INTEGER CHECK (total_views IS NULL OR total_views >= 0),
-    publication_count INTEGER CHECK (publication_count IS NULL OR publication_count >= 0),
-    reach_30d INTEGER CHECK (reach_30d IS NULL OR reach_30d >= 0),
-    followers_override INTEGER CHECK (followers_override IS NULL OR followers_override >= 0),
-    total_views_override INTEGER CHECK (total_views_override IS NULL OR total_views_override >= 0),
-    publication_count_override INTEGER CHECK (publication_count_override IS NULL OR publication_count_override >= 0),
-    reach_30d_override INTEGER CHECK (reach_30d_override IS NULL OR reach_30d_override >= 0),
-    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
-    sync_status TEXT NOT NULL DEFAULT 'pending' CHECK (sync_status IN ('pending', 'success', 'error', 'needs_auth')),
-    sync_error TEXT,
-    sync_source TEXT,
-    last_synced_at TEXT,
-    metrics_updated_at TEXT,
-    next_sync_at TEXT,
-    lease_until TEXT,
-    lease_token TEXT,
-    consecutive_failures INTEGER NOT NULL DEFAULT 0 CHECK (consecutive_failures >= 0),
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-  )`,
-  `CREATE UNIQUE INDEX IF NOT EXISTS idx_creator_channels_normalized_url ON creator_channels (normalized_url)`,
-  `CREATE UNIQUE INDEX IF NOT EXISTS idx_creator_channels_provider_id ON creator_channels (platform_id, provider_channel_id)`,
-  `CREATE INDEX IF NOT EXISTS idx_creator_channels_creator_id ON creator_channels (creator_id)`,
-  `CREATE INDEX IF NOT EXISTS idx_creator_channels_platform_id ON creator_channels (platform_id)`,
-  `CREATE INDEX IF NOT EXISTS idx_creator_channels_due ON creator_channels (status, next_sync_at, lease_until)`,
-  `CREATE INDEX IF NOT EXISTS idx_creator_channels_lease_token ON creator_channels (lease_token)`,
-  `CREATE TABLE IF NOT EXISTS channel_sync_history (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    channel_id INTEGER NOT NULL REFERENCES creator_channels(id),
-    status TEXT NOT NULL CHECK (status IN ('success', 'error', 'needs_auth')),
-    observed_at TEXT NOT NULL,
-    recorded_at TEXT NOT NULL,
-    source TEXT,
-    error_message TEXT,
-    provider_channel_id TEXT,
-    handle TEXT,
-    title TEXT,
-    avatar_url TEXT,
-    followers INTEGER CHECK (followers IS NULL OR followers >= 0),
-    total_views INTEGER CHECK (total_views IS NULL OR total_views >= 0),
-    publication_count INTEGER CHECK (publication_count IS NULL OR publication_count >= 0),
-    reach_30d INTEGER CHECK (reach_30d IS NULL OR reach_30d >= 0),
-    creator_type_snapshot TEXT NOT NULL CHECK (creator_type_snapshot IN ('UGC', 'AI')),
-    producer_id_snapshot INTEGER NOT NULL
-  )`,
-  `CREATE UNIQUE INDEX IF NOT EXISTS idx_channel_sync_history_observation ON channel_sync_history (channel_id, observed_at)`,
-  `CREATE INDEX IF NOT EXISTS idx_channel_sync_history_channel_recorded ON channel_sync_history (channel_id, recorded_at)`,
-  `CREATE INDEX IF NOT EXISTS idx_channel_sync_history_status_recorded ON channel_sync_history (status, recorded_at)`,
-  `CREATE TABLE IF NOT EXISTS telegram_creator_links (
-    telegram_user_id TEXT PRIMARY KEY NOT NULL,
-    creator_id INTEGER NOT NULL REFERENCES creators(id),
-    chat_id TEXT NOT NULL,
-    username TEXT,
-    display_name TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-  )`,
-  `CREATE INDEX IF NOT EXISTS idx_telegram_creator_links_creator_id ON telegram_creator_links (creator_id)`,
-  `CREATE TABLE IF NOT EXISTS telegram_submissions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    update_id INTEGER NOT NULL,
-    telegram_user_id TEXT NOT NULL REFERENCES telegram_creator_links(telegram_user_id),
-    creator_id INTEGER NOT NULL REFERENCES creators(id),
-    channel_id INTEGER NOT NULL REFERENCES creator_channels(id),
-    source_kind TEXT NOT NULL CHECK (source_kind IN ('channel', 'video')),
-    result_status TEXT NOT NULL CHECK (result_status IN ('created', 'existing')),
-    created_at TEXT NOT NULL
-  )`,
-  `CREATE UNIQUE INDEX IF NOT EXISTS idx_telegram_submissions_update_id ON telegram_submissions (update_id)`,
-  `CREATE INDEX IF NOT EXISTS idx_telegram_submissions_user_created ON telegram_submissions (telegram_user_id, created_at)`,
-  `CREATE INDEX IF NOT EXISTS idx_telegram_submissions_channel_id ON telegram_submissions (channel_id)`,
-  `INSERT OR IGNORE INTO app_meta (key, value) VALUES ('channel_model_version', '1')`,
-];
-
 const producersSeed = [
   [1, 'Анна', 'active', '2026-08-12T09:00:00.000Z'],
   [2, 'Сергей', 'active', '2026-08-14T09:00:00.000Z'],
@@ -509,7 +366,7 @@ async function enforceYouTubeRetention(binding: D1Database) {
 
 export async function ensureDatabase() {
   const binding = db();
-  await binding.batch(schemaStatements.map((statement) => binding.prepare(statement)));
+  // Schema changes are applied once by versioned Drizzle migrations, never per request.
 
   const seeded = await binding.prepare("SELECT value FROM app_meta WHERE key = 'seed_version'").first<{ value: string }>();
   if (!seeded) {
@@ -580,6 +437,10 @@ export async function getDashboardData() {
     binding.prepare('SELECT id, name, domains, status FROM platforms ORDER BY id').all(),
     binding.prepare(`SELECT ch.id, ch.creator_id AS creatorId, c.name AS creatorName, c.type AS creatorType,
       c.producer_id AS producerId, p.name AS producerName, ch.platform_id AS platformId,
+      (SELECT telegram_user_id FROM telegram_creator_links WHERE creator_id = c.id ORDER BY type_confirmed_at DESC, created_at LIMIT 1) AS creatorTelegramId,
+      (SELECT username FROM telegram_creator_links WHERE creator_id = c.id ORDER BY type_confirmed_at DESC, created_at LIMIT 1) AS creatorTelegramUsername,
+      (SELECT telegram_user_id FROM telegram_producer_links WHERE producer_id = p.id) AS producerTelegramId,
+      (SELECT a.username FROM telegram_accounts a JOIN telegram_producer_links l ON l.telegram_user_id = a.telegram_user_id WHERE l.producer_id = p.id) AS producerTelegramUsername,
       pf.name AS platformName, ch.url, ch.normalized_url AS normalizedUrl,
       ch.provider_channel_id AS providerChannelId, ch.handle, ch.title, ch.avatar_url AS avatarUrl,
       ch.followers, ch.total_views AS totalViews, ch.publication_count AS publicationCount,
@@ -752,6 +613,13 @@ export async function updateCreator(input: Record<string, unknown>) {
 export async function createChannel(input: Record<string, unknown>) {
   await ensureDatabase();
   const binding = db();
+  const ready = await binding.prepare(`SELECT c.id FROM creators c
+    JOIN producers p ON p.id = c.producer_id
+    JOIN telegram_producer_links pl ON pl.producer_id = p.id
+    JOIN telegram_creator_links cl ON cl.creator_id = c.id
+    WHERE c.id = ? AND c.status = 'active' AND p.status = 'active' AND cl.type_confirmed_at IS NOT NULL`)
+    .bind(Number(input.creatorId) || 0).first();
+  if (!ready) throw new Error('Сначала зарегистрируйте креатора через Telegram: приглашение продюсера → ИИ / UGC → канал');
   const channel = normalizeChannelUrl(input.url);
   const platform = await channelPlatform(binding, channel.platformName);
   const status = validateStatus(input.status ?? 'active');
@@ -853,7 +721,8 @@ export async function updateChannel(input: Record<string, unknown>) {
 }
 
 const CHANNEL_LEASE_MS = 15 * 60_000;
-const CHANNEL_SUCCESS_INTERVAL_MS = 6 * 60 * 60_000;
+const CHANNEL_SUCCESS_INTERVAL_MS = 24 * 60 * 60_000;
+const CHANNEL_FAILURE_MAX_INTERVAL_MS = 6 * 60 * 60_000;
 const YOUTUBE_HISTORY_RETENTION_MS = 30 * 24 * 60 * 60_000;
 const YOUTUBE_RETENTION_SWEEP_BUFFER_MS = 24 * 60 * 60_000;
 const NEEDS_AUTH_RETRY_MS = 24 * 60 * 60_000;
@@ -968,11 +837,14 @@ export async function claimDueChannels(limitValue: unknown = 1) {
   const leaseToken = crypto.randomUUID();
   await binding.prepare(`UPDATE creator_channels SET lease_until = ?, lease_token = ?, updated_at = ?
     WHERE id IN (
-      SELECT id FROM creator_channels
-      WHERE status = 'active'
-        AND (next_sync_at IS NULL OR next_sync_at <= ?)
-        AND (lease_until IS NULL OR lease_until <= ?)
-      ORDER BY COALESCE(next_sync_at, created_at), id
+      SELECT ch.id FROM creator_channels ch
+      JOIN creators c ON c.id = ch.creator_id
+      JOIN producers p ON p.id = c.producer_id
+      JOIN platforms pf ON pf.id = ch.platform_id
+      WHERE ch.status = 'active' AND c.status = 'active' AND p.status = 'active' AND pf.status = 'active'
+        AND (ch.next_sync_at IS NULL OR ch.next_sync_at <= ?)
+        AND (ch.lease_until IS NULL OR ch.lease_until <= ?)
+      ORDER BY COALESCE(ch.next_sync_at, ch.created_at), ch.id
       LIMIT ?
     )`).bind(leaseUntil, leaseToken, nowIso, nowIso, nowIso, requestedLimit).run();
   const claimed = await binding.prepare(`SELECT ch.id, ch.url, ch.normalized_url AS normalizedUrl,
@@ -1014,6 +886,9 @@ export async function completeChannelSync(input: Record<string, unknown>) {
   const totalViews = optionalSyncMetric(input, 'totalViews', 'Просмотры');
   const publicationCount = optionalSyncMetric(input, 'publicationCount', 'Публикации');
   const reach30d = optionalSyncMetric(input, 'reach30d', 'Охват за 30 дней');
+  if ([followers, totalViews, publicationCount, reach30d].every((value) => value === null)) {
+    throw new ChannelStorageError('Площадка не предоставила ни одной метрики канала', 422);
+  }
   const now = new Date();
   const recordedAt = now.toISOString();
   const nextSyncAt = new Date(now.getTime() + CHANNEL_SUCCESS_INTERVAL_MS).toISOString();
@@ -1033,7 +908,7 @@ export async function completeChannelSync(input: Record<string, unknown>) {
         handle, title, avatarUrl, followers, totalViews, publicationCount, reach30d,
         channelId, observedAt, leaseToken, recordedAt),
     binding.prepare(`UPDATE creator_channels SET
-      provider_channel_id = ?, handle = ?, title = ?, avatar_url = ?,
+      provider_channel_id = ?, handle = COALESCE(?, handle), title = COALESCE(?, title), avatar_url = COALESCE(?, avatar_url),
       followers = ?, total_views = ?, publication_count = ?, reach_30d = ?,
       sync_status = 'success', sync_error = NULL, sync_source = ?, last_synced_at = ?,
       metrics_updated_at = ?, next_sync_at = CASE WHEN status = 'active' THEN ? ELSE NULL END,
@@ -1060,7 +935,7 @@ export async function completeChannelSync(input: Record<string, unknown>) {
 function failureRetryAt(status: ChannelSyncFailureStatus, failureCount: number, now: Date) {
   if (status === 'needs_auth') return new Date(now.getTime() + NEEDS_AUTH_RETRY_MS).toISOString();
   const exponent = Math.min(Math.max(failureCount - 1, 0), 5);
-  const delayMs = Math.min(15 * 60_000 * (2 ** exponent), CHANNEL_SUCCESS_INTERVAL_MS);
+  const delayMs = Math.min(15 * 60_000 * (2 ** exponent), CHANNEL_FAILURE_MAX_INTERVAL_MS);
   return new Date(now.getTime() + delayMs).toISOString();
 }
 

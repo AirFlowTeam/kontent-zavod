@@ -295,7 +295,7 @@ export function createGoogleSheetsWorkbook(data: ReportExportData) {
     {
       name: 'Каналы',
       widths: [
-        16, 28, 20, 24, 10, 22, 54, 18, 20, 18, 16, 16, 22, 24, 22, 22, 42,
+        16, 28, 20, 24, 10, 22, 54, 24, 24, 18, 20, 18, 16, 16, 22, 24, 22, 22, 42,
       ],
       rows: [
         [
@@ -306,6 +306,8 @@ export function createGoogleSheetsWorkbook(data: ReportExportData) {
           'Тип',
           'Продюсер',
           'Ссылка',
+          'Telegram креатора',
+          'Telegram продюсера',
           'Подписчики',
           'Охваты канала',
           'Охват 30 дней',
@@ -327,6 +329,8 @@ export function createGoogleSheetsWorkbook(data: ReportExportData) {
             channel.creatorType,
             channel.producerName,
             channel.url,
+            channel.creatorTelegramUsername ? `@${channel.creatorTelegramUsername}` : channel.creatorTelegramId ?? 'Не привязан',
+            channel.producerTelegramUsername ? `@${channel.producerTelegramUsername}` : channel.producerTelegramId ?? 'Не привязан',
             metrics.followers ?? '',
             metrics.totalViews ?? '',
             metrics.reach30d ?? '',

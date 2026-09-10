@@ -33,7 +33,9 @@ export async function POST(request: Request) {
   try {
     let parsed: unknown;
     try {
-      parsed = await request.json();
+      const raw = await request.text();
+      if (raw.length > 32_768) return json({ error: 'Запрос слишком большой' }, 413);
+      parsed = JSON.parse(raw);
     } catch {
       throw new ChannelStorageError('Некорректный JSON', 400);
     }
