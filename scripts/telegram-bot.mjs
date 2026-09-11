@@ -7,6 +7,7 @@ import {
   channelDescriptorsFromInfo,
   directChannelDescriptor,
   inspectSubmittedUrl,
+  normalizeVkSourceUrl,
   parseTelegramAdminUserIds,
 } from './telegram-bot-lib.mjs';
 
@@ -175,7 +176,7 @@ async function processLink(chatId, user, updateId, url) {
   await sendMessage(chatId, inspected.needsResolution ? 'Определяю автора ролика…' : 'Проверяю канал…');
   let descriptors = inspected.candidates.map(directChannelDescriptor).filter(Boolean);
   if (inspected.needsResolution) {
-    const metadata = await runYtDlp(url, { binary: ytDlpBin, timeoutMs: ytDlpTimeoutMs, video: true,
+    const metadata = await runYtDlp(normalizeVkSourceUrl(url), { binary: ytDlpBin, timeoutMs: ytDlpTimeoutMs, video: true,
       cookieFile: process.env.YTDLP_COOKIES_FILE, proxyUrl: process.env.PARSER_PROXY_URL, signal: stopController.signal })
       .catch(() => { throw new ServiceError('Не удалось определить автора по ролику. Пришлите ссылку на канал.', 422, 0, true); });
     descriptors = channelDescriptorsFromInfo(metadata, url);

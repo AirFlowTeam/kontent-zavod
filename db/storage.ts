@@ -66,6 +66,7 @@ export function normalizeUrl(value: string) {
   if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('Укажите ссылку, начинающуюся с http:// или https://');
   parsed.protocol = 'https:';
   parsed.hostname = parsed.hostname.toLowerCase().replace(/^(www\.|m\.)/, '');
+  if (parsed.hostname === 'vk.ru') parsed.hostname = 'vk.com';
   parsed.hash = '';
   const tracking = new Set([
     '_r', '_t', 'fbclid', 'feature', 'gclid', 'igsh', 'igshid', 'is_copy_url',
@@ -116,6 +117,7 @@ function channelUrl(value: unknown) {
   }
   parsed.protocol = 'https:';
   parsed.hostname = parsed.hostname.toLowerCase().replace(/^(www\.|m\.)/, '');
+  if (parsed.hostname === 'vk.ru') parsed.hostname = 'vk.com';
   parsed.port = '';
   parsed.hash = '';
   if ((parsed.hostname === 'vk.com' || parsed.hostname === 'vkvideo.ru')

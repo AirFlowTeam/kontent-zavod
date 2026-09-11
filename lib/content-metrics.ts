@@ -166,9 +166,10 @@ export function buildProducerRows(
 
 export function detectPlatformId(urlValue: string, platforms: Platform[]) {
   try {
-    const hostname = new URL(urlValue).hostname
+    let hostname = new URL(urlValue).hostname
       .toLowerCase()
       .replace(/^(www\.|m\.)/, '');
+    if (hostname === 'vk.ru') hostname = 'vk.com';
     return (
       platforms.find((platform) =>
         platform.domains.some(

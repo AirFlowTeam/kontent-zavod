@@ -24,7 +24,8 @@ export function parseTelegramAdminUserIds(value = '') {
 }
 
 function cleanHost(hostname) {
-  return hostname.toLowerCase().replace(/^(?:www\.|m\.)/, '');
+  const host = hostname.toLowerCase().replace(/^(?:www\.|m\.)/, '');
+  return host === 'vk.ru' ? 'vk.com' : host;
 }
 
 function safeHttpUrl(value) {
@@ -36,6 +37,17 @@ function safeHttpUrl(value) {
   } catch {
     return null;
   }
+}
+
+// The installed extractor may only recognize vk.com. Preserve the video path
+// and query while treating VK's .ru domain as the same provider, not a new site.
+export function normalizeVkSourceUrl(value) {
+  const parsed = safeHttpUrl(value);
+  if (parsed && /^(?:(?:www|m)\.)?vk\.ru$/i.test(parsed.hostname)) {
+    parsed.hostname = 'vk.com';
+    return parsed.toString();
+  }
+  return value;
 }
 
 function trimUrlPunctuation(value) {
