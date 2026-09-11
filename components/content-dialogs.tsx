@@ -1,6 +1,7 @@
 'use client';
 
 import { ChannelContacts } from '@/components/channel-contacts';
+import { channelSyncHelp } from '@/lib/channel-sync-help.mjs';
 
 import { useEffect, useMemo, useState } from 'react';
 import {
@@ -674,9 +675,9 @@ export function ChannelDetailDialog({
             {channel.lastSyncError && (
               <Alert variant="destructive">
                 <AlertCircle />
-                <AlertTitle>Ошибка синхронизации</AlertTitle>
+                <AlertTitle>{channel.lastSyncStatus === 'needs_auth' ? 'Статистика пока недоступна' : 'Ошибка синхронизации'}</AlertTitle>
                 <AlertDescription className="break-words">
-                  {channel.lastSyncError}
+                  {channelSyncHelp(channel.platformName, channel.lastSyncStatus) ?? channel.lastSyncError}
                 </AlertDescription>
               </Alert>
             )}

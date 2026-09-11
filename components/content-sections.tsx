@@ -1,6 +1,7 @@
 'use client';
 
 import { ChannelContacts } from '@/components/channel-contacts';
+import { channelSyncHelp } from '@/lib/channel-sync-help.mjs';
 
 import {
   AlertTriangle,
@@ -755,9 +756,9 @@ export function ChannelsSection({
                         {channel.lastSyncError && (
                           <p
                             className="mt-1 max-w-44 truncate text-[10px] text-destructive"
-                            title={channel.lastSyncError}
+                            title={channelSyncHelp(channel.platformName, channel.lastSyncStatus) ?? channel.lastSyncError}
                           >
-                            {channel.lastSyncError}
+                            {channelSyncHelp(channel.platformName, channel.lastSyncStatus) ?? channel.lastSyncError}
                           </p>
                         )}
                       </td>
@@ -894,7 +895,7 @@ export function ChannelsSection({
                   </div>
                   {channel.lastSyncError && (
                     <p className="mt-2 break-words text-xs text-destructive">
-                      {channel.lastSyncError}
+                      {channelSyncHelp(channel.platformName, channel.lastSyncStatus) ?? channel.lastSyncError}
                     </p>
                   )}
                 </article>

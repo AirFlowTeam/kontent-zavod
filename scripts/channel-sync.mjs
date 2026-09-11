@@ -3,6 +3,7 @@
 import { runYtDlp } from './yt-dlp-runner.mjs';
 import { asNonNegativeInteger, ensureMetrics, mapYtDlpResult, ytDlpChannelUrl, classifyProviderError } from './channel-parser-lib.mjs';
 import { fetchPublicProfile, parseVkProfile } from './channel-providers.mjs';
+import { parseRutubeProfile } from './rutube-provider.mjs';
 
 const baseUrl = (process.env.CONTENT_FACTORY_BASE_URL || 'http://127.0.0.1:18082').replace(
   /\/$/,
@@ -160,20 +161,7 @@ async function parseRutubePublicProfile(channel) {
     if (resolved._type === 'playlist' && /^\d+$/.test(candidate)) profileId = candidate;
   }
   if (!profileId) throw new Error('Не удалось определить ID RuTube-канала');
-  const profile = await fetchJson(`https://rutube.ru/api/profile/user/${profileId}/`, {
-    headers: { referer: channel.url },
-  });
-  return {
-    providerChannelId: String(profile.id || profileId),
-    handle: null,
-    title: String(profile.name || '').trim() || null,
-    avatarUrl: profile.avatar_url || null,
-    followers: asNonNegativeInteger(profile.subscribers_count),
-    totalViews: asNonNegativeInteger(profile.hits),
-    publicationCount: asNonNegativeInteger(profile.video_count),
-    reach30d: null,
-    parserSource: 'rutube-public-web',
-  };
+  return parseRutubeProfile(channel, { profileId, signal: requestSignal(commandTimeoutMs) });
 }
 
 
@@ -189,12 +177,9 @@ async function processChannel(channel) {
         console.warn(`${new Date().toISOString()} YouTube API fallback: ${compactError(error)}`);
       }
     }
-    if (!metrics) {
-      try {
-        metrics = await parseRutubePublicProfile(channel);
-      } catch (error) {
-        console.warn(`${new Date().toISOString()} RuTube API fallback: ${compactError(error)}`);
-      }
+    if (!metrics && channel.platformName === 'RuTube') {
+      // An incomplete listing must fail, not fall back to the incorrect profile count.
+      metrics = await parseRutubePublicProfile(channel);
     }
     if (!metrics) {
       if (channel.platformName === 'YouTube') {

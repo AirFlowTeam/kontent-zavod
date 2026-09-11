@@ -2,6 +2,26 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createTelegramBotFlow } from '../scripts/telegram-bot-flow.mjs';
 import { storageHarness, onboard } from './storage-harness.mjs';
+import { channelSyncHelp } from '../lib/channel-sync-help.mjs';
+
+test('channel status explains Instagram access without asking for passwords; partial metrics are explicit', async () => {
+  const sent = [];
+  const flow = createTelegramBotFlow({ backend: async () => ({ channels: [
+    { platformName: 'Instagram', url: 'https://instagram.com/fixture', syncStatus: 'needs_auth', totalViews: null, publicationCount: null, totalLikes: null },
+    { platformName: 'RuTube', url: 'https://rutube.ru/channel/123', syncStatus: 'success', totalViews: 440, publicationCount: 6, totalLikes: null },
+    { platformName: 'RuTube', url: 'https://rutube.ru/channel/456', syncStatus: 'success', totalViews: 0, publicationCount: 0, totalLikes: 0 },
+  ] }), send: async (_, text) => sent.push(text), answerCallback: async () => {}, processLink: async () => {}, botUsername: () => 'fixture' });
+  await flow.handleMessage({ update_id: 1, message: { from: { id: 2001 }, chat: { id: 2001, type: 'private' }, text: '/channels' } });
+  assert.match(sent[0], /Канал сохранён/);
+  assert.match(sent[0], /пока не настроено/);
+  assert.match(sent[0], /Не отправляйте пароль/);
+  assert.match(sent[1], /Ролики: 6/);
+  assert.match(sent[1], /обновлено частично/);
+  assert.match(sent[2], /Лайки: 0/);
+  assert.doesNotMatch(sent[2], /частично/);
+  assert.equal(channelSyncHelp('Instagram', 'success'), null);
+  assert.doesNotMatch(channelSyncHelp('VK', 'needs_auth'), /Instagram/);
+});
 
 test('full bot conversation: producer, personal invitation, AI creator, link, channels, role switch', async (t) => {
   const h = storageHarness(); t.after(h.close);
