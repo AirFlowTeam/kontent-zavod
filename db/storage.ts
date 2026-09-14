@@ -431,7 +431,7 @@ export async function getDashboardData() {
   await ensureDatabase();
   const binding = db();
   const now = new Date().toISOString();
-  const [producers, creators, platforms, channels, videos, urlAliases] = await Promise.all([
+  const [producers, creators, platforms, channels, videos, urlAliases, telegramAccounts] = await Promise.all([
     binding.prepare('SELECT id, name, status, created_at AS createdAt FROM producers ORDER BY name COLLATE NOCASE').all(),
     binding.prepare(`SELECT c.id, c.name, c.type, c.producer_id AS producerId, p.name AS producerName,
       c.status, c.created_at AS createdAt
@@ -445,6 +445,7 @@ export async function getDashboardData() {
       (SELECT telegram_user_id FROM telegram_producer_links WHERE producer_id = p.id) AS producerTelegramId,
       (SELECT a.username FROM telegram_accounts a JOIN telegram_producer_links l ON l.telegram_user_id = a.telegram_user_id WHERE l.producer_id = p.id) AS producerTelegramUsername,
       pf.name AS platformName, ch.url, ch.normalized_url AS normalizedUrl,
+      sc.status AS connectionStatus, sc.username AS connectionUsername, sc.expires_at AS connectionExpiresAt,
       ch.provider_channel_id AS providerChannelId, ch.handle, ch.title, ch.avatar_url AS avatarUrl,
       ch.followers, ch.total_views AS totalViews, ch.publication_count AS publicationCount,
       ch.total_likes AS totalLikes, ch.total_likes_override AS totalLikesOverride,
@@ -471,6 +472,7 @@ export async function getDashboardData() {
       JOIN creators c ON c.id = ch.creator_id
       JOIN producers p ON p.id = c.producer_id
       JOIN platforms pf ON pf.id = ch.platform_id
+      LEFT JOIN social_connections sc ON sc.channel_id = ch.id AND sc.creator_id = ch.creator_id
       WHERE ch.deleted_at IS NULL
       ORDER BY c.name COLLATE NOCASE, pf.id, ch.id`).bind(now, now).all<DashboardChannelRow>(),
     binding.prepare(`SELECT v.id, v.creator_id AS creatorId, c.name AS creatorName, c.type AS creatorType,
@@ -484,11 +486,34 @@ export async function getDashboardData() {
       JOIN platforms pf ON pf.id = v.platform_id
       ORDER BY v.published_at DESC, v.id DESC`).all<DashboardVideoRow>(),
     binding.prepare('SELECT canonical_url AS canonicalUrl, video_id AS videoId FROM video_url_aliases').all<UrlAliasRow>(),
+    binding.prepare(`SELECT a.telegram_user_id AS telegramUserId, a.username, a.display_name AS displayName,
+      a.role, a.selected_type AS selectedType, l.creator_id AS creatorId,
+      CASE WHEN a.role = 'producer' THEN pl.producer_id ELSE COALESCE(c.producer_id, i.producer_id) END AS producerId, p.name AS producerName,
+      pl.producer_id AS ownProducerId, c.producer_id AS creatorProducerId,
+      team.telegram_user_id AS producerTelegramId, pa.username AS producerTelegramUsername,
+      (SELECT COUNT(*) FROM creator_channels ch WHERE ch.creator_id = l.creator_id AND ch.deleted_at IS NULL) AS channelCount,
+      CASE WHEN a.role IS NULL THEN 'Выбирает роль'
+        WHEN p.status = 'inactive' OR (a.role = 'creator' AND c.status = 'inactive') THEN 'Профиль отключён'
+        WHEN a.role = 'producer' THEN 'Продюсер'
+        WHEN l.type_confirmed_at IS NOT NULL THEN 'Креатор подключён'
+        WHEN i.redeemed_by IS NOT NULL AND i.redeemed_by != a.telegram_user_id THEN 'Приглашение использовано'
+        WHEN i.token_hash IS NOT NULL AND i.expires_at > ? THEN 'Выбирает ИИ / UGC'
+        ELSE 'Ожидает приглашение' END AS stage,
+      a.created_at AS createdAt, a.updated_at AS updatedAt
+      FROM telegram_accounts a LEFT JOIN telegram_creator_links l ON l.telegram_user_id = a.telegram_user_id
+      LEFT JOIN creators c ON c.id = l.creator_id
+      LEFT JOIN telegram_producer_links pl ON pl.telegram_user_id = a.telegram_user_id
+      LEFT JOIN telegram_invites i ON i.token_hash = a.pending_invite_hash
+      LEFT JOIN producers p ON p.id = CASE WHEN a.role = 'producer' THEN pl.producer_id ELSE COALESCE(c.producer_id, i.producer_id) END
+      LEFT JOIN telegram_producer_links team ON team.producer_id = p.id
+      LEFT JOIN telegram_accounts pa ON pa.telegram_user_id = team.telegram_user_id
+      ORDER BY a.created_at DESC, a.telegram_user_id`).bind(now).all(),
   ]);
 
   return {
     producers: producers.results,
     creators: creators.results,
+    telegramAccounts: telegramAccounts.results,
     platforms: platforms.results.map((platform) => ({
       ...platform,
       domains: JSON.parse(String(platform.domains)) as string[],
@@ -692,13 +717,17 @@ function archiveChannelStatement(binding: D1Database, id: number, now: string, o
     .bind(now, now, id, ownerId, ownerId);
 }
 
+function archivedSecretsStatements(binding: D1Database, id: number) {
+  return ['social_connections', 'social_connect_tickets'].map((table) => binding.prepare(`DELETE FROM ${table} WHERE channel_id=? AND EXISTS(SELECT 1 FROM creator_channels WHERE id=? AND deleted_at IS NOT NULL)`).bind(id, id));
+}
+
 export async function deleteChannel(input: Record<string, unknown>, ownerId: number | null = null) {
   await ensureDatabase();
   const id = integerId(input.id, 'Канал');
   const existing = await db().prepare('SELECT id, deleted_at AS deletedAt FROM creator_channels WHERE id = ? AND (? IS NULL OR creator_id = ?)')
     .bind(id, ownerId, ownerId).first<{ id: number; deletedAt: string | null }>();
   if (!existing) throw new ChannelStorageError('Канал не найден', 404);
-  if (!existing.deletedAt) await archiveChannelStatement(db(), id, new Date().toISOString(), ownerId).run();
+  await db().batch([archiveChannelStatement(db(), id, new Date().toISOString(), ownerId), ...archivedSecretsStatements(db(), id)]);
   return id;
 }
 
@@ -726,6 +755,7 @@ export async function updateChannel(input: Record<string, unknown>, ownerId: num
           .bind(platform.id, replacement.normalizedUrl, replacement.normalizedUrl, replacement.inferredHandle,
             status, status === 'active' ? now : null, now, now, id, existing.normalizedUrl, ownerId, ownerId),
         archiveChannelStatement(binding, id, now, ownerId),
+        ...archivedSecretsStatements(binding, id),
       ]);
       if (!results[0]?.meta.changes) throw new ChannelStorageError('Канал уже изменён. Откройте список заново', 409);
       return Number(results[0].meta.last_row_id);

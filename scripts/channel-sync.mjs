@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 
 import { runYtDlp } from './yt-dlp-runner.mjs';
-import { asNonNegativeInteger, ensureMetrics, mapYtDlpResult, ytDlpChannelUrl, classifyProviderError } from './channel-parser-lib.mjs';
+import { ensureMetrics, mapYtDlpResult, ytDlpChannelUrl, classifyProviderError } from './channel-parser-lib.mjs';
 import { fetchPublicProfile, parseVkProfile } from './channel-providers.mjs';
 import { parseRutubeProfile } from './rutube-provider.mjs';
+import { collectAuthorized, refreshAccess, SocialApiError } from '../lib/social-api.mjs';
 
 const baseUrl = (process.env.CONTENT_FACTORY_BASE_URL || 'http://127.0.0.1:18082').replace(
   /\/$/,
@@ -51,6 +52,8 @@ function wait(ms) {
 
 function compactError(value) {
   return String(value || 'Неизвестная ошибка')
+    .replace(/https?:\/\/[^\s]+/g, '[provider URL]')
+    .replace(/(?:access_token|refresh_token|client_secret|authorization|api_key|key)\s*[:=]\s*[^\s,;]+/gi, '[redacted]')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 900);
@@ -90,66 +93,6 @@ async function reportResult(payload) {
 }
 
 
-async function fetchJson(url, init = {}) {
-  const response = await fetch(url, {
-    ...init,
-    headers: {
-      accept: 'application/json',
-      'user-agent': 'KontentZavod/1.0 (+channel metrics collector)',
-      ...init.headers,
-    },
-    signal: requestSignal(30_000),
-  });
-  if (!response.ok) throw new Error(`Provider returned HTTP ${response.status}`);
-  return response.json();
-}
-
-async function parseYouTubeWithApi(channel) {
-  const apiKey = process.env.YOUTUBE_API_KEY;
-  if (!apiKey) return null;
-
-  const url = new URL(channel.url);
-  const parts = url.pathname.split('/').filter(Boolean).map(decodeURIComponent);
-  let filter;
-  if (channel.providerChannelId && /^UC[A-Za-z0-9_-]{22}$/.test(channel.providerChannelId)) filter = ['id', channel.providerChannelId];
-  else if (parts[0] === 'channel' && parts[1]) filter = ['id', parts[1]];
-  else if (parts[0]?.startsWith('@')) filter = ['forHandle', parts[0]];
-  else if (parts[0] === 'user' && parts[1]) filter = ['forUsername', parts[1]];
-  else if (parts[0] === 'c') {
-    const redirected = await fetch(channel.url, {
-      method: 'HEAD',
-      redirect: 'follow',
-      signal: requestSignal(20_000),
-    });
-    const redirectedParts = new URL(redirected.url).pathname.split('/').filter(Boolean).map(decodeURIComponent);
-    if (redirectedParts[0]?.startsWith('@')) filter = ['forHandle', redirectedParts[0]];
-  }
-  if (!filter) return null;
-
-  const query = new URLSearchParams({ part: 'id,snippet,statistics', key: apiKey });
-  query.set(filter[0], filter[1]);
-  const payload = await fetchJson(`https://www.googleapis.com/youtube/v3/channels?${query}`);
-  const item = payload.items?.[0];
-  if (!item) throw new Error('Канал YouTube не найден');
-  const thumbnails = Object.values(item.snippet?.thumbnails || {});
-  const avatar = thumbnails.sort(
-    (a, b) => (Number(b?.width) || 0) * (Number(b?.height) || 0) - (Number(a?.width) || 0) * (Number(a?.height) || 0),
-  )[0]?.url;
-  return {
-    providerChannelId: item.id || null,
-    handle: item.snippet?.customUrl || (filter[0] === 'forHandle' ? filter[1] : null),
-    title: item.snippet?.title || null,
-    avatarUrl: avatar || null,
-    followers: item.statistics?.hiddenSubscriberCount
-      ? null
-      : asNonNegativeInteger(item.statistics?.subscriberCount),
-    totalViews: asNonNegativeInteger(item.statistics?.viewCount),
-    publicationCount: asNonNegativeInteger(item.statistics?.videoCount),
-    reach30d: null,
-    parserSource: 'youtube-data-api',
-  };
-}
-
 async function parseRutubePublicProfile(channel) {
   if (channel.platformName !== 'RuTube') return null;
   const match = new URL(channel.url).pathname.match(/\/(?:channel|video\/person)\/(\d+)/i);
@@ -168,11 +111,26 @@ async function parseRutubePublicProfile(channel) {
 async function processChannel(channel) {
   const observedAt = new Date().toISOString();
   let metrics;
+  let connection;
   try {
     metrics = null;
-    if (channel.platformName === 'YouTube') {
+    connection = (await syncRequest({ action: 'connection', channelId: channel.id, leaseToken: channel.leaseToken })).connection;
+    if (connection) {
+      const options = { signal: requestSignal(commandTimeoutMs), tiktokClientKey: process.env.TIKTOK_CLIENT_KEY, tiktokClientSecret: process.env.TIKTOK_CLIENT_SECRET, expectedAccountId: connection.accountId };
+      const shouldRefresh = ['TikTok', 'VK'].includes(channel.platformName) || (channel.platformName === 'Instagram' && Date.now() - Date.parse(connection.refreshedAt || connection.version) >= 24 * 60 * 60_000);
+      if (shouldRefresh) {
+        const updated = await refreshAccess(channel.platformName, connection.credentials, options);
+        if (updated) {
+          // Persist rotating refresh tokens before optional profile/video requests.
+          const saved = await reportResult({ action: 'updateConnection', channelId: channel.id, leaseToken: channel.leaseToken, version: connection.version, ...updated });
+          connection = { ...connection, ...updated, version: saved.version };
+        } else if (channel.platformName !== 'YouTube') throw new SocialApiError('Автопродление не настроено. Проверьте refresh token и приложение в инструкции площадки.');
+      }
+      metrics = await collectAuthorized(channel, connection, options);
+    }
+    if (!metrics && channel.platformName === 'YouTube' && process.env.YOUTUBE_API_KEY) {
       try {
-        metrics = await parseYouTubeWithApi(channel);
+        metrics = await collectAuthorized(channel, { credentials: { accessToken: process.env.YOUTUBE_API_KEY } }, { signal: requestSignal(commandTimeoutMs) });
       } catch (error) {
         console.warn(`${new Date().toISOString()} YouTube API fallback: ${compactError(error)}`);
       }
@@ -201,6 +159,7 @@ async function processChannel(channel) {
     ensureMetrics(metrics);
   } catch (error) {
     if (stopping) return;
+    if (connection && classifyProviderError(error) === 'needs_auth') await syncRequest({ action: 'updateConnection', channelId: channel.id, leaseToken: channel.leaseToken, version: connection.version, status: 'needs_auth' }).catch(() => {});
     const message = compactError(error instanceof Error ? error.message : error);
     await reportResult({
       action: 'fail',

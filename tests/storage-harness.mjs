@@ -51,7 +51,7 @@ export function storageHarness() {
     // eslint-disable-next-line @typescript-eslint/no-implied-eval
     new Function('require', 'module', 'exports', output)((name) => {
       if (name === 'cloudflare:workers') return { env };
-      if (name.startsWith('@/')) return load(`${name.slice(2)}.ts`);
+      if (name.startsWith('@/')) return name.endsWith('.mjs') ? require(resolve(root, name.slice(2))) : load(`${name.slice(2)}.ts`);
       return require(name);
     }, loaded, loaded.exports);
     return loaded.exports;

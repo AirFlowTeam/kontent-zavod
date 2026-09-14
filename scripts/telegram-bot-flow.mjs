@@ -1,7 +1,8 @@
 import { extractMessageUrls } from './telegram-bot-lib.mjs';
-import { channelSyncHelp } from '../lib/channel-sync-help.mjs';
+import { channelSyncHelp, channelCoverage } from '../lib/channel-sync-help.mjs';
 import { invitationFromMessage } from './telegram-invitation.mjs';
 import { randomBytes } from 'node:crypto';
+import { socialInstructionText, socialInstructions } from '../lib/social-instructions.mjs';
 
 const keyboard = (rows) => ({ reply_markup: { inline_keyboard: rows } });
 export const homeMenu = keyboard([[{ text: '⌂ Главное меню', callback_data: 'menu:home' }]]);
@@ -13,7 +14,7 @@ const producerMenu = keyboard([
   [{ text: 'Мои креаторы', callback_data: 'menu:creators' }, { text: 'Каналы и статистика', callback_data: 'menu:channels' }],
   [{ text: 'Профиль', callback_data: 'menu:profile' }],
 ]);
-const creatorMenu = keyboard([[{ text: '＋ Добавить канал', callback_data: 'menu:add-channel' }], [{ text: 'Мои каналы', callback_data: 'menu:channels' }, { text: 'Профиль', callback_data: 'menu:profile' }]]);
+const creatorMenu = keyboard([[{ text: '＋ Добавить канал', callback_data: 'menu:add-channel' }], [{ text: 'Мои каналы', callback_data: 'menu:channels' }, { text: 'Профиль', callback_data: 'menu:profile' }], [{ text: 'Подключение соцсетей · инструкции', callback_data: 'menu:social' }]]);
 
 export function telegramContact(id, username) {
   return username ? `@${username.replace(/^@/, '')}` : id ? `Telegram ID ${id}` : 'не привязан';
@@ -33,6 +34,9 @@ export function createTelegramBotFlow({ backend, send: deliver, answerCallback, 
     for (const [key, item] of map) if (item.expiresAt < Date.now()) map.delete(key);
     if (map.size >= 1000) map.delete(map.keys().next().value);
     map.set(id, { ...value, expiresAt: expiresAt() });
+  }
+  function socialMenu(chatId) {
+    return send(chatId, 'Выберите площадку: покажу, нужен ли ключ, где его получить и как подключить свой канал. Если приложения ещё нет, сначала потребуется настройка администратором.', keyboard([...Object.keys(socialInstructions).map((name) => [{ text: name, callback_data: `social:help:${name}` }]), ...homeMenu.reply_markup.inline_keyboard]));
   }
   async function showContext(chatId, context) {
     if (context.ownInvite) return send(chatId, 'Это приглашение для вашего креатора. Отправьте ему ссылку — свою роль менять не нужно.');
@@ -85,10 +89,12 @@ export function createTelegramBotFlow({ backend, send: deliver, answerCallback, 
     page = Math.min(page, pageCount - 1);
     for (const channel of result.channels.slice(page * 5, page * 5 + 5)) {
       const number = (value) => value === null || value === undefined ? 'недоступно' : Number(value).toLocaleString('ru-RU');
-      const partial = ['totalViews', 'publicationCount', 'totalLikes'].some((key) => channel[key] === null || channel[key] === undefined);
+      const partial = Boolean(channelCoverage(channel.parserSource)) || ['totalViews', 'publicationCount', 'totalLikes'].some((key) => channel[key] === null || channel[key] === undefined);
       const status = { pending: 'ожидает проверки', success: partial ? 'обновлено частично' : 'обновлено', needs_auth: 'сбор ограничен доступом площадки', error: 'ошибка, повторим автоматически' }[channel.syncStatus] ?? channel.syncStatus;
-      const help = channelSyncHelp(channel.platformName, channel.syncStatus);
+      const help = [channelSyncHelp(channel.platformName, channel.syncStatus), channelCoverage(channel.parserSource), channel.connectionStatus ? `API-доступ: ${channel.connectionStatus === 'needs_auth' ? 'требуется переподключение' : 'подключён'} · ${channel.connectionUsername || ''}${channel.connectionExpiresAt ? `\nСрок: ${new Date(channel.connectionExpiresAt).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' })} (МСК)` : '\nСрок не подтверждён API'}` : null].filter(Boolean).join('\n\n');
       const controls = String(channel.creatorTelegramId) === actor.telegramUserId ? [
+        [{ text: 'Инструкция площадки', callback_data: `social:help:${channel.platformName}` }],
+        ...(channel.platformName !== 'RuTube' ? [[{ text: channel.connectionStatus ? 'Переподключить API' : 'Подключить API', callback_data: `social:connect:${channel.id}` }, ...(channel.connectionStatus ? [{ text: 'Отключить доступ', callback_data: `social:disconnect:${channel.id}` }] : [])]] : []),
         [{ text: 'Изменить ссылку', callback_data: `channel:edit:${channel.id}` }, { text: 'Удалить', callback_data: `channel:delete:${channel.id}` }],
         [{ text: channel.status === 'inactive' ? 'Возобновить сбор' : 'Приостановить сбор', callback_data: `channel:${channel.status === 'inactive' ? 'resume' : 'pause'}:${channel.id}` }],
       ] : [];
@@ -104,6 +110,7 @@ export function createTelegramBotFlow({ backend, send: deliver, answerCallback, 
   async function handleCommand(message, command, payload, updateId) {
     const actor = identity(message.from, message.chat.id);
     const chatId = message.chat.id;
+    if (command === 'social') return socialMenu(chatId);
     if (command === 'help') return send(chatId,
       'Продюсер: /start → «Я продюсер» → «Добавить креатора» → передать ему персональное приглашение.\n\nКреатор: открыть приглашение → выбрать ИИ-контент или UGC → прислать ссылки на свои каналы или видео.\n\nСтатистика обновляется раз в сутки. /channels — каналы, показатели и статусы. /creators — команда продюсера. /profile — профиль. /role — переключить свою роль.\n\nПоддерживаются YouTube, RuTube, VK, TikTok, Instagram. Закрытые данные требуют доступа площадки; недоступные показатели не заменяются нулями.');
     if (command === 'role' || command === 'change') return send(chatId, 'Выберите свою роль. Чужие профили недоступны:', roles);
@@ -131,7 +138,7 @@ export function createTelegramBotFlow({ backend, send: deliver, answerCallback, 
         return send(message.chat.id, `${error.message}\n\nНажмите «Как получить приглашение» или вернитесь в главное меню. Ваши существующие каналы не изменены.`, keyboard([...invitationHelp.reply_markup.inline_keyboard, ...homeMenu.reply_markup.inline_keyboard]));
       }
     }
-    const command = text.match(/^\/(start|help|profile|whoami|change|role|creators|invite|channels|cancel)(?:@\w+)?(?:\s+(\S+))?\s*$/i);
+    const command = text.match(/^\/(start|help|profile|whoami|change|role|creators|invite|channels|cancel|social)(?:@\w+)?(?:\s+(\S+))?\s*$/i);
     if (command) {
       editingChannels.delete(String(message.from.id));
       return handleCommand(message, command[1].toLowerCase(), command[2] || '', update.update_id);
@@ -170,6 +177,28 @@ export function createTelegramBotFlow({ backend, send: deliver, answerCallback, 
     const confirmation = confirmations.get(actor.telegramUserId);
     confirmations.delete(actor.telegramUserId);
     editingChannels.delete(actor.telegramUserId);
+    if (data === 'menu:social') return socialMenu(message.chat.id);
+    const socialHelp = data.match(/^social:help:(Instagram|TikTok|VK|YouTube|RuTube)$/);
+    if (socialHelp) return send(message.chat.id, socialInstructionText(socialHelp[1]), keyboard([[{ text: 'Мои каналы → подключить', callback_data: 'menu:channels' }], [{ text: 'Другие площадки', callback_data: 'menu:social' }], ...homeMenu.reply_markup.inline_keyboard]));
+    const social = data.match(/^social:(connect|disconnect|confirm-disconnect):([1-9]\d*)(?::([a-f0-9]{16}))?$/);
+    if (social) {
+      const id = Number(social[2]);
+      if (social[1] === 'connect') {
+        const result = await backend('connectSocial', { ...actor, id });
+        return send(message.chat.id, `Подключение ${result.connection.platformName}.\n\nОткройте персональную форму — там инструкция и поля доступа. Ссылка одноразовая, действует 10 минут. Не пересылайте её. Пароли и токены в сообщения боту не отправляйте.`, keyboard([[{ text: 'Открыть защищённую форму', url: result.connection.url }], [{ text: 'Мои каналы', callback_data: 'menu:channels' }]]));
+      }
+      if (social[1] === 'confirm-disconnect') {
+        if (!confirmation || confirmation.action !== 'disconnect' || confirmation.id !== id || confirmation.nonce !== social[3] || confirmation.expiresAt < Date.now()) return send(message.chat.id, 'Это старое подтверждение. Доступ не изменён. Откройте /channels.');
+        await backend('disconnectSocial', { ...actor, id });
+        return send(message.chat.id, 'Сохранённый API-доступ удалён из платформы. Канал и статистика остались. Само разрешение приложения можно отозвать в настройках соцсети.');
+      }
+      const result = await backend('channels', actor);
+      const channel = result.channels?.find((c) => c.id === id && String(c.creatorTelegramId) === actor.telegramUserId);
+      if (!channel) return send(message.chat.id, 'Канал недоступен.');
+      const nonce = randomBytes(8).toString('hex');
+      remember(confirmations, actor.telegramUserId, { action: 'disconnect', id, nonce });
+      return send(message.chat.id, `Удалить сохранённый доступ к ${channel.url}? Статистика останется, но сбор закрытых данных остановится.`, keyboard([[{ text: 'Да, отключить API', callback_data: `social:confirm-disconnect:${id}:${nonce}` }], ...homeMenu.reply_markup.inline_keyboard]));
+    }
     const channelAction = data.match(/^channel:(edit|delete|pause|resume|delete-confirm):([1-9]\d*)(?::([a-f0-9]{16}))?$/);
     if (channelAction) {
       const id = Number(channelAction[2]);

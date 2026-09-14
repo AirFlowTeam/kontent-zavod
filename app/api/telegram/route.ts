@@ -6,6 +6,7 @@ import { getTelegramContext, selectTelegramRole, createTelegramInvite, acceptTel
   selectTelegramCreatorType, listTelegramChannels, manageTelegramChannel } from '@/db/telegram-onboarding';
 import { authorizeSyncRequest } from '@/lib/server/sync-auth';
 import { ChannelStorageError } from '@/db/storage';
+import { createConnectTicket, disconnectSocial } from '@/db/social-connections';
 
 export const dynamic = 'force-dynamic';
 
@@ -63,6 +64,8 @@ export async function POST(request: Request) {
     if (action === 'acceptInvite') return json({ ok: true, ...await acceptTelegramInvite(body) });
     if (action === 'selectType') return json({ ok: true, ...await selectTelegramCreatorType(body) });
     if (action === 'channels') return json({ ok: true, channels: await listTelegramChannels(body) });
+    if (action === 'connectSocial') return json({ ok: true, connection: await createConnectTicket(body) });
+    if (action === 'disconnectSocial') return json({ ok: true, ...await disconnectSocial(body) });
     if (action === 'updateChannel' || action === 'deleteChannel') return json({ ok: true, id: await manageTelegramChannel(body) });
     if (action === 'submit') {
       const channel = await submitTelegramChannel(body);

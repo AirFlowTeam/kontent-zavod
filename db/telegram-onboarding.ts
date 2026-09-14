@@ -295,6 +295,7 @@ export async function listTelegramChannels(input: Input) {
   const producerMode = context.role === 'producer' && context.producer?.status === 'active';
   if (!producerMode && !context.canSubmit) throw new TelegramStorageError('Завершите регистрацию через /start', 409);
   return (await db().prepare(`SELECT ch.id, ch.normalized_url AS url, ch.title, pf.name AS platformName,
+    sc.status AS connectionStatus, sc.username AS connectionUsername, sc.expires_at AS connectionExpiresAt,
     c.name AS creatorName, c.type AS creatorType, p.name AS producerName,
     t.telegram_user_id AS creatorTelegramId, t.username AS creatorTelegramUsername,
     pl.telegram_user_id AS producerTelegramId, a.username AS producerTelegramUsername,
@@ -302,10 +303,11 @@ export async function listTelegramChannels(input: Input) {
     COALESCE(ch.total_views_override, ch.total_views) AS totalViews,
     COALESCE(ch.total_likes_override, ch.total_likes) AS totalLikes,
     COALESCE(ch.publication_count_override, ch.publication_count) AS publicationCount,
-    ch.sync_status AS syncStatus, ch.sync_error AS syncError, ch.metrics_updated_at AS metricsUpdatedAt,
+    ch.sync_status AS syncStatus, ch.sync_error AS syncError, ch.metrics_updated_at AS metricsUpdatedAt, ch.sync_source AS parserSource,
     ch.status, ch.next_sync_at AS nextSyncAt FROM creator_channels ch
     JOIN creators c ON c.id = ch.creator_id JOIN producers p ON p.id = c.producer_id
     JOIN platforms pf ON pf.id = ch.platform_id
+    LEFT JOIN social_connections sc ON sc.channel_id = ch.id AND sc.creator_id = ch.creator_id
     LEFT JOIN telegram_creator_links t ON t.creator_id = c.id
     LEFT JOIN telegram_producer_links pl ON pl.producer_id = p.id
     LEFT JOIN telegram_accounts a ON a.telegram_user_id = pl.telegram_user_id

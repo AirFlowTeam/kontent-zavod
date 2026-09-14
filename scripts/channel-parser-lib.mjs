@@ -171,6 +171,7 @@ export function parseYouTubeHtml(html, channel) {
 }
 
 export function classifyProviderError(error) {
+  if (error?.syncStatus === 'needs_auth' || error?.syncStatus === 'error') return error.syncStatus;
   if (error instanceof ProviderError) return error.kind;
   const message = String(error?.message || error);
   if (/429|rate.?limit|too many requests/i.test(message)) return 'error';

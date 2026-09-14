@@ -57,6 +57,13 @@
       "when": 1789374644670,
       "tag": "0007_faulty_stark_industries",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1789393207223,
+      "tag": "0008_lush_slapstick",
+      "breakpoints": true
     }
   ]
 }

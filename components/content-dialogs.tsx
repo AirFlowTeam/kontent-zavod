@@ -1,7 +1,8 @@
 'use client';
 
 import { ChannelContacts } from '@/components/channel-contacts';
-import { channelSyncHelp } from '@/lib/channel-sync-help.mjs';
+import { channelSyncHelp, channelCoverage } from '@/lib/channel-sync-help.mjs';
+import { socialInstructions } from '@/lib/social-instructions.mjs';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -726,6 +727,11 @@ export function ChannelDetailDialog({
                 </AlertDescription>
               </Alert>
             )}
+            {channelCoverage(channel.parserSource) && <p className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800">{channelCoverage(channel.parserSource)}</p>}
+            <details className="rounded-xl border p-3 text-sm"><summary className="cursor-pointer font-medium">API-доступ и инструкция {channel.platformName}</summary>
+              <p className="mt-2">{channel.connectionStatus === 'connected' ? `Доступ подключён: ${channel.connectionUsername}` : channel.connectionStatus === 'needs_auth' ? 'Требуется переподключение доступа' : 'Персональный доступ не подключён'}. Креатор подключает его в боте: /channels → свой канал → Подключить API.</p>
+              <ol className="list-decimal pl-5 space-y-2 mt-3">{socialInstructions[channel.platformName as keyof typeof socialInstructions]?.steps.map((s) => <li key={s}>{s}</li>)}</ol>
+            </details>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               <MetricTile label="Подписчики" value={metrics.followers ?? '—'} />
               <MetricTile

@@ -32,6 +32,9 @@ export interface Creator {
 }
 
 export interface Channel {
+  connectionStatus?: string | null;
+  connectionUsername?: string | null;
+  connectionExpiresAt?: string | null;
   periodData?: import('@/lib/report-period').ChannelPeriod;
   id: number;
   creatorId: number;
@@ -81,6 +84,24 @@ export interface DashboardData {
   creators: Creator[];
   platforms: Platform[];
   channels: Channel[];
+  telegramAccounts?: TelegramAccount[];
+}
+
+export interface TelegramAccount {
+  telegramUserId: string;
+  username: string | null;
+  displayName: string | null;
+  role: 'producer' | 'creator' | null;
+  selectedType: CreatorType | null;
+  creatorId: number | null;
+  producerId: number | null;
+  producerName: string | null;
+  producerTelegramId: string | null;
+  producerTelegramUsername: string | null;
+  channelCount: number;
+  stage: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface ChannelEffectiveMetrics {

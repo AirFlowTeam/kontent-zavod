@@ -271,6 +271,7 @@ async function main() {
       { command: 'channels', description: 'Каналы и статистика' },
       { command: 'role', description: 'Моя роль' },
       { command: 'help', description: 'Как пользоваться ботом' },
+      { command: 'social', description: 'API и инструкции всех соцсетей' },
     ],
     scope: { type: 'all_private_chats' },
   });
@@ -289,13 +290,13 @@ async function main() {
         timeout: 25,
         allowed_updates: ['message', 'callback_query'],
       }, 35_000);
-      failures = 0;
       for (const update of updates) {
         if (!Number.isSafeInteger(update.update_id)) continue;
         await handleUpdate(update);
         offset = Math.max(offset, update.update_id + 1);
         if (stopping) break;
       }
+      failures = 0;
     } catch (error) {
       if (stopping) break;
       failures += 1;

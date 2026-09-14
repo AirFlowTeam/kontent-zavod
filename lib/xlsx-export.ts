@@ -3,6 +3,7 @@
 import { strToU8, zipSync } from 'fflate';
 
 import { effectiveChannelMetrics, getFreshness } from '@/lib/content-metrics';
+import { channelCoverage } from '@/lib/channel-sync-help.mjs';
 import type {
   Channel,
   ChannelSyncStatus,
@@ -346,7 +347,7 @@ export function createGoogleSheetsWorkbook(data: ReportExportData) {
               : 'Нет синхронизации',
             channel.lastSyncAt ?? '',
             freshnessLabels[getFreshness(channel.lastSyncAt)],
-            channel.parserSource ?? '',
+            [channel.parserSource, channelCoverage(channel.parserSource)].filter(Boolean).join(' · '),
             channel.lastSyncError ?? '',
           ];
         }),

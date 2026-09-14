@@ -67,8 +67,10 @@ import type {
   RecordStatus,
 } from '@/lib/content-types';
 import { downloadGoogleSheetsReport } from '@/lib/xlsx-export';
+import { TelegramAccounts } from '@/components/telegram-accounts';
+import { SocialConnections } from '@/components/social-connections';
 
-type View = 'dashboard' | 'ugc' | 'ai' | 'channels' | 'producers';
+type View = 'dashboard' | 'ugc' | 'ai' | 'channels' | 'producers' | 'telegram' | 'social';
 type FilterStatus = '' | RecordStatus | ChannelSyncStatus;
 type Filters = {
   type: '' | CreatorType;
@@ -89,6 +91,8 @@ const emptyData: DashboardData = {
 
 const navigation = [
   { id: 'dashboard' as const, label: 'Главная', icon: LayoutDashboard },
+  { id: 'telegram' as const, label: 'Все TG-пользователи', icon: UsersRound },
+  { id: 'social' as const, label: 'Доступы соцсетей', icon: Link2 },
   { id: 'ugc' as const, label: 'UGC-креаторы', icon: CircleUserRound },
   { id: 'ai' as const, label: 'AI-креаторы', icon: Bot },
   { id: 'channels' as const, label: 'Каналы', icon: Link2 },
@@ -96,6 +100,8 @@ const navigation = [
 ];
 
 const viewCopy: Record<View, { title: string; description: string }> = {
+  telegram: { title: 'Пользователи Telegram', description: 'Все регистрации из бота в единой админке. Автообновление — каждые 3 секунды.' },
+  social: { title: 'Доступы соцсетей', description: 'Инструкции площадок, доступы владельцев и ограничения данных.' },
   dashboard: {
     title: 'Обзор',
     description: 'Аудитория, охваты и состояние всех подключённых каналов.',
@@ -135,6 +141,7 @@ export default function ContentFactoryApp() {
   const [data, setData] = useState<DashboardData>(emptyData);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [refreshError, setRefreshError] = useState('');
   const [view, setView] = useState<View>('dashboard');
   const [filters, setFilters] = useState<Filters>(defaultFilters);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -161,6 +168,7 @@ export default function ContentFactoryApp() {
   const [exportError, setExportError] = useState('');
   const loadInFlightRef = useRef<Promise<void> | null>(null);
   const hasLoadedDataRef = useRef(false);
+  const lastLoadSucceededRef = useRef(false);
   const actionsDisabled = loading || Boolean(error);
 
   const notify = useCallback((message: string) => {
@@ -185,7 +193,7 @@ export default function ContentFactoryApp() {
     }
     const request = (async () => {
       try {
-        const response = await fetch('/api/data', { cache: 'no-store' });
+        const response = await fetch('/api/data', { cache: 'no-store', signal: AbortSignal.timeout(15_000) });
         const payload = (await response.json()) as DashboardData & {
           error?: string;
         };
@@ -194,7 +202,11 @@ export default function ContentFactoryApp() {
         setData({ ...payload, channels: payload.channels ?? [] });
         hasLoadedDataRef.current = true;
         setError('');
+        setRefreshError('');
+        lastLoadSucceededRef.current = true;
       } catch (caught) {
+        lastLoadSucceededRef.current = false;
+        setRefreshError('Автообновление временно недоступно. Показываем последние загруженные данные; повторим автоматически.');
         if (showLoader || !hasLoadedDataRef.current) {
           setError(
             caught instanceof Error
@@ -227,6 +239,28 @@ export default function ContentFactoryApp() {
       window.clearInterval(intervalId);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
+  }, [loadData]);
+
+  useEffect(() => {
+    let revision = '';
+    let busy = false;
+    let stopped = false;
+    const check = async () => {
+      if (busy || document.visibilityState !== 'visible') return;
+      busy = true;
+      try {
+        const response = await fetch('/api/revision', { cache: 'no-store', signal: AbortSignal.timeout(8_000) });
+        if (!response.ok) throw new Error();
+        const payload = await response.json() as { revision: string };
+        if (!stopped && revision !== payload.revision) {
+          await loadData(false, true);
+          if (lastLoadSucceededRef.current) revision = payload.revision;
+        }
+      } catch { if (!stopped) setRefreshError('Нет связи с сервером автообновления. Повторим автоматически.'); }
+      finally { busy = false; }
+    };
+    const timer = window.setInterval(() => void check(), 3_000);
+    return () => { stopped = true; window.clearInterval(timer); };
   }, [loadData]);
 
   const mutate = useCallback(
@@ -326,7 +360,7 @@ export default function ContentFactoryApp() {
   );
 
   const creatorRows = useMemo(
-    () => buildCreatorRows(filteredChannels, matchingCreators),
+    () => buildCreatorRows(filteredChannels, matchingCreators, true),
     [filteredChannels, matchingCreators],
   );
   const allCreatorRows = useMemo(
@@ -514,6 +548,10 @@ export default function ContentFactoryApp() {
     <LoadingState />
   ) : error ? (
     <ErrorState message={error} onRetry={() => void loadData()} />
+  ) : view === 'telegram' ? (
+    <TelegramAccounts accounts={data.telegramAccounts ?? []} />
+  ) : view === 'social' ? (
+    <SocialConnections channels={data.channels} />
   ) : view === 'dashboard' ? (
     <DashboardSection
       metrics={metrics}
@@ -689,7 +727,7 @@ export default function ContentFactoryApp() {
               <Filter data-icon="inline-start" /> Фильтры · {activeFilterCount}
             </Button>
           </div>
-          {!loading && !error && (
+          {!loading && !error && !['telegram', 'social'].includes(view) && (
             <div className="mt-6 hidden lg:block">
               <FilterBar
                 filters={filters}
@@ -702,6 +740,7 @@ export default function ContentFactoryApp() {
             </div>
           )}
           {exportError && <Alert variant="destructive" className="mt-4"><AlertTitle>Выгрузка не создана</AlertTitle><AlertDescription>{exportError}</AlertDescription></Alert>}
+          {refreshError && !loading && <p role="status" className="my-3 text-sm text-amber-700">{refreshError}</p>}
           <div className="mt-6">{content}</div>
         </section>
       </div>

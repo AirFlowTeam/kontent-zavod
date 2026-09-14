@@ -273,3 +273,25 @@ export const telegramInvites = sqliteTable('telegram_invites', {
   uniqueIndex('idx_telegram_invites_update').on(table.createdBy, table.updateId),
   index('idx_telegram_invites_producer').on(table.producerId, table.createdAt),
 ]);
+
+export const socialConnections = sqliteTable('social_connections', {
+  channelId: integer('channel_id').primaryKey().references(() => creatorChannels.id),
+  creatorId: integer('creator_id').notNull().references(() => creators.id),
+  telegramUserId: text('telegram_user_id').notNull(),
+  accountId: text('account_id').notNull(),
+  username: text('username').notNull(),
+  ciphertext: text('ciphertext').notNull(),
+  status: text('status').notNull(),
+  expiresAt: text('expires_at'),
+  refreshedAt: text('refreshed_at'),
+  updatedAt: text('updated_at').notNull(),
+}, (table) => [index('idx_social_connections_creator').on(table.creatorId)]);
+
+export const socialConnectTickets = sqliteTable('social_connect_tickets', {
+  tokenHash: text('token_hash').primaryKey(),
+  channelId: integer('channel_id').notNull().references(() => creatorChannels.id),
+  creatorId: integer('creator_id').notNull().references(() => creators.id),
+  telegramUserId: text('telegram_user_id').notNull(),
+  expiresAt: text('expires_at').notNull(),
+  consumed: integer('consumed').notNull().default(0),
+}, (table) => [index('idx_social_tickets_channel').on(table.channelId)]);

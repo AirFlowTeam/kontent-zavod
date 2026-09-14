@@ -5,6 +5,8 @@ import {
   failChannelSync,
 } from '@/db/storage';
 import { authorizeSyncRequest } from '@/lib/server/sync-auth';
+import { collectorConnection, updateCollectorConnection } from '@/db/social-connections';
+import { TelegramStorageError } from '@/db/telegram-onboarding';
 
 export const dynamic = 'force-dynamic';
 
@@ -41,6 +43,8 @@ export async function POST(request: Request) {
     }
     const body = requestBody(parsed);
     action = typeof body.action === 'string' ? body.action : '';
+    if (action === 'connection') return json({ ok: true, connection: await collectorConnection(body) });
+    if (action === 'updateConnection') return json({ ok: true, ...await updateCollectorConnection(body) });
     if (action === 'claim') {
       const channels = await claimDueChannels(body.limit);
       return json({ channels });
@@ -58,10 +62,10 @@ export async function POST(request: Request) {
     const message = error instanceof Error ? error.message : 'Ошибка синхронизации';
     const duplicateProvider = /UNIQUE constraint failed: creator_channels\.platform_id, creator_channels\.provider_channel_id/i.test(message);
     const databaseFailure = /(?:D1_ERROR|SQLITE_|database (?:is|error)|no such (?:table|column))/i.test(message);
-    const status = error instanceof ChannelStorageError ? error.statusCode
+    const status = error instanceof ChannelStorageError || error instanceof TelegramStorageError ? error.statusCode
       : duplicateProvider ? 409
         : databaseFailure ? 500 : 400;
-    console.error(JSON.stringify({ message: 'channel sync request failed', action, status, error: message }));
+    console.error(JSON.stringify({ message: 'channel sync request failed', action, status }));
     const clientMessage = duplicateProvider ? 'Канал с таким ID провайдера уже добавлен'
       : status >= 500 ? 'Внутренняя ошибка синхронизации' : message;
     return json({ error: clientMessage }, status);

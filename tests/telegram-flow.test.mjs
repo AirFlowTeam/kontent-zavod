@@ -13,8 +13,8 @@ test('channel status explains Instagram access without asking for passwords; par
   ] }), send: async (_, text) => sent.push(text), answerCallback: async () => {}, processLink: async () => {}, botUsername: () => 'fixture' });
   await flow.handleMessage({ update_id: 1, message: { from: { id: 2001 }, chat: { id: 2001, type: 'private' }, text: '/channels' } });
   assert.match(sent[0], /Канал сохранён/);
-  assert.match(sent[0], /пока не настроено/);
-  assert.match(sent[0], /Не отправляйте пароль/);
+  assert.match(sent[0], /Подключить API/);
+  assert.match(sent[0], /Пароли.*не отправляйте/);
   assert.match(sent[1], /Ролики: 6/);
   assert.match(sent[1], /обновлено частично/);
   assert.match(sent[2], /Лайки: 0/);
