@@ -3,7 +3,7 @@
 import { ChannelContacts } from '@/components/channel-contacts';
 import { channelSyncHelp } from '@/lib/channel-sync-help.mjs';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
   ExternalLink,
@@ -115,6 +115,7 @@ export function ChannelCorrectionDialog({
   const [status, setStatus] = useState<Channel['status']>('active');
   const [url, setUrl] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const editingId = useRef<number | null>(null);
   const [followers, setFollowers] = useState('');
   const [totalViews, setTotalViews] = useState('');
   const [publicationCount, setPublicationCount] = useState('');
@@ -123,7 +124,10 @@ export function ChannelCorrectionDialog({
   const [error, setError] = useState('');
 
   useEffect(() => {
-    if (!open || !channel) return;
+    if (!open || !channel) { editingId.current = null; return; }
+    // Background metric refreshes must not reset an unsaved URL or confirmation.
+    if (editingId.current === channel.id) return;
+    editingId.current = channel.id;
     setStatus(channel.status);
     setUrl(channel.url);
     setConfirmDelete(false);
