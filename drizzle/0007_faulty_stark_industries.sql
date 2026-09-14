@@ -1,0 +1,1 @@
+ALTER TABLE `creator_channels` ADD `deleted_at` text;

@@ -1,5 +1,5 @@
 import { env } from 'cloudflare:workers';
-import { ensureDatabase } from '@/db/storage';
+import { ensureDatabase, updateChannel, deleteChannel } from '@/db/storage';
 
 export class TelegramStorageError extends Error {
   constructor(message: string, readonly statusCode: number) {
@@ -303,12 +303,22 @@ export async function listTelegramChannels(input: Input) {
     COALESCE(ch.total_likes_override, ch.total_likes) AS totalLikes,
     COALESCE(ch.publication_count_override, ch.publication_count) AS publicationCount,
     ch.sync_status AS syncStatus, ch.sync_error AS syncError, ch.metrics_updated_at AS metricsUpdatedAt,
-    ch.next_sync_at AS nextSyncAt FROM creator_channels ch
+    ch.status, ch.next_sync_at AS nextSyncAt FROM creator_channels ch
     JOIN creators c ON c.id = ch.creator_id JOIN producers p ON p.id = c.producer_id
     JOIN platforms pf ON pf.id = ch.platform_id
     LEFT JOIN telegram_creator_links t ON t.creator_id = c.id
     LEFT JOIN telegram_producer_links pl ON pl.producer_id = p.id
     LEFT JOIN telegram_accounts a ON a.telegram_user_id = pl.telegram_user_id
-    WHERE ${producerMode ? 'c.producer_id = ?' : 't.telegram_user_id = ?'} AND ch.status = 'active'
+    WHERE ${producerMode ? 'c.producer_id = ?' : 't.telegram_user_id = ?'} AND ch.deleted_at IS NULL
     ORDER BY c.id, ch.id LIMIT 50`).bind(producerMode ? context.producer!.id : identity.id).all()).results;
+}
+
+export async function manageTelegramChannel(input: Input) {
+  const owner = await requireTelegramCreatorReady(telegramIdentity(input).id);
+  if (input.action === 'deleteChannel') return deleteChannel({ id: input.id }, owner.id);
+  // Creator controls the link and polling, not manual statistics or ownership.
+  return updateChannel({ id: input.id,
+    ...('url' in input ? { url: input.url } : {}),
+    ...('status' in input ? { status: input.status } : {}),
+  }, owner.id);
 }

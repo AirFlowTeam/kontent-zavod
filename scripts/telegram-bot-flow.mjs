@@ -1,5 +1,7 @@
 import { extractMessageUrls } from './telegram-bot-lib.mjs';
 import { channelSyncHelp } from '../lib/channel-sync-help.mjs';
+import { invitationFromMessage } from './telegram-invitation.mjs';
+import { randomBytes } from 'node:crypto';
 
 const keyboard = (rows) => ({ reply_markup: { inline_keyboard: rows } });
 export const homeMenu = keyboard([[{ text: '⌂ Главное меню', callback_data: 'menu:home' }]]);
@@ -24,6 +26,14 @@ function identity(user, chatId) {
 
 export function createTelegramBotFlow({ backend, send: deliver, answerCallback, processLink, botUsername }) {
   const send = (chatId, text, extra = homeMenu) => deliver(chatId, text, extra);
+  const confirmations = new Map();
+  const editingChannels = new Map();
+  const expiresAt = () => Date.now() + 10 * 60_000;
+  function remember(map, id, value) {
+    for (const [key, item] of map) if (item.expiresAt < Date.now()) map.delete(key);
+    if (map.size >= 1000) map.delete(map.keys().next().value);
+    map.set(id, { ...value, expiresAt: expiresAt() });
+  }
   async function showContext(chatId, context) {
     if (context.ownInvite) return send(chatId, 'Это приглашение для вашего креатора. Отправьте ему ссылку — свою роль менять не нужно.');
     if (!context.role) return send(chatId, 'Добро пожаловать в «Контент-завод». Выберите свою роль:', roles);
@@ -38,13 +48,13 @@ export function createTelegramBotFlow({ backend, send: deliver, answerCallback, 
       return send(chatId, 'Приглашение больше не действует. Попросите продюсера новую персональную ссылку.', invitationHelp);
     }
     if (!context.binding && !context.pendingInvite) {
-      return send(chatId, 'Чтобы начать, откройте личную ссылку от своего продюсера. После этого выберете ИИ / UGC и добавите каналы.', invitationHelp);
+      return send(chatId, 'Шаг 1 из 3 — приглашение.\n\nБот открыт, но приглашение в команду ещё не получено. Откройте личную ссылку от своего продюсера или скопируйте её целиком и отправьте сюда. После этого выберете ИИ / UGC и добавите каналы.\n\nПовторно выбирать роль не нужно.', invitationHelp);
     }
     if (!context.selectedType && !context.binding?.typeConfirmedAt) {
       return send(chatId, `${context.pendingInvite ? `Приглашение от продюсера: ${context.pendingInvite.producerName}\n\n` : ''}Перед добавлением каналов выберите тип контента. Он задаётся один раз для креатора и всех его каналов.`, types);
     }
     if (!context.binding) {
-      return send(chatId, `Тип: ${context.selectedType === 'AI' ? 'ИИ-контент' : 'UGC'}.\n\nТеперь откройте персональную пригласительную ссылку своего продюсера. После привязки сможете добавлять каналы.`);
+      return send(chatId, `Тип: ${context.selectedType === 'AI' ? 'ИИ-контент' : 'UGC'}.\n\nПриглашение сохранено. Нажмите «Продолжить подключение», чтобы завершить привязку.`, keyboard([[{ text: 'Продолжить подключение', callback_data: 'onboarding:resume' }]]));
     }
     if (!context.canSubmit) return send(chatId, 'Для каналов нужна Telegram-привязка вашего продюсера. Попросите администратора связать существующий профиль продюсера с его Telegram.');
     return send(chatId, `Креатор: ${context.binding.name}\nТип: ${context.binding.type === 'AI' ? 'ИИ-контент' : 'UGC'}\nПродюсер: ${context.binding.producerName} (${telegramContact(context.binding.producerTelegramId, context.binding.producerTelegramUsername)})\n\nПришлите ссылку на свой канал или видео. Бот определит канал; отдельные ролики не сохраняются. Первая проверка — сразу, затем раз в сутки.`, creatorMenu);
@@ -78,8 +88,12 @@ export function createTelegramBotFlow({ backend, send: deliver, answerCallback, 
       const partial = ['totalViews', 'publicationCount', 'totalLikes'].some((key) => channel[key] === null || channel[key] === undefined);
       const status = { pending: 'ожидает проверки', success: partial ? 'обновлено частично' : 'обновлено', needs_auth: 'сбор ограничен доступом площадки', error: 'ошибка, повторим автоматически' }[channel.syncStatus] ?? channel.syncStatus;
       const help = channelSyncHelp(channel.platformName, channel.syncStatus);
+      const controls = String(channel.creatorTelegramId) === actor.telegramUserId ? [
+        [{ text: 'Изменить ссылку', callback_data: `channel:edit:${channel.id}` }, { text: 'Удалить', callback_data: `channel:delete:${channel.id}` }],
+        [{ text: channel.status === 'inactive' ? 'Возобновить сбор' : 'Приостановить сбор', callback_data: `channel:${channel.status === 'inactive' ? 'resume' : 'pause'}:${channel.id}` }],
+      ] : [];
       const updated = channel.metricsUpdatedAt ? new Intl.DateTimeFormat('ru-RU', { timeZone: 'Europe/Moscow', dateStyle: 'short', timeStyle: 'short' }).format(new Date(channel.metricsUpdatedAt)) : 'ещё нет';
-      await send(chatId, `${channel.title || channel.platformName}\n${channel.url}\nКреатор: ${channel.creatorName} (${telegramContact(channel.creatorTelegramId, channel.creatorTelegramUsername)})\nПродюсер: ${channel.producerName} (${telegramContact(channel.producerTelegramId, channel.producerTelegramUsername)})\nТип: ${channel.creatorType}\n\nПросмотры: ${number(channel.totalViews)}\nРолики: ${number(channel.publicationCount)}\nЛайки: ${number(channel.totalLikes)}\nСтатус: ${status}\nОбновлено: ${updated} (МСК)${help ? `\n\n${help}` : ''}`, { reply_markup: { inline_keyboard: [] } });
+      await send(chatId, `${channel.title || channel.platformName}\n${channel.url}\nКреатор: ${channel.creatorName} (${telegramContact(channel.creatorTelegramId, channel.creatorTelegramUsername)})\nПродюсер: ${channel.producerName} (${telegramContact(channel.producerTelegramId, channel.producerTelegramUsername)})\nТип: ${channel.creatorType}\n\nПросмотры: ${number(channel.totalViews)}\nРолики: ${number(channel.publicationCount)}\nЛайки: ${number(channel.totalLikes)}\nСтатус: ${channel.status === 'inactive' ? 'сбор приостановлен' : status}\nОбновлено: ${updated} (МСК)${help ? `\n\n${help}` : ''}`, { reply_markup: { inline_keyboard: controls } });
     }
     const buttons = [];
     if (page > 0) buttons.push({ text: '← Назад', callback_data: `channels:${page - 1}` });
@@ -104,14 +118,41 @@ export function createTelegramBotFlow({ backend, send: deliver, answerCallback, 
     const message = update.message;
     if (!message?.from || message.chat?.type !== 'private' || String(message.from.id) !== String(message.chat.id)) return;
     const text = typeof message.text === 'string' ? message.text.trim() : '';
-    const command = text.match(/^\/(start|help|profile|whoami|change|role|creators|invite|channels)(?:@\w+)?(?:\s+(\S+))?\s*$/i);
-    if (command) return handleCommand(message, command[1].toLowerCase(), command[2] || '', update.update_id);
+    confirmations.delete(String(message.from.id));
+    const invitation = invitationFromMessage(message, botUsername());
+    if (invitation) {
+      editingChannels.delete(String(message.from.id));
+      if (invitation.kind !== 'invite') return send(message.chat.id, invitation.kind === 'multiple'
+        ? 'В сообщении несколько приглашений. Отправьте только личную ссылку от своего продюсера.'
+        : 'В этой ссылке нет действительного приглашения в команду. Попросите продюсера нажать «Добавить креатора» и отправить вам полученную персональную ссылку целиком.', invitationHelp);
+      try { return await showContext(message.chat.id, await backend('acceptInvite', { ...identity(message.from, message.chat.id), token: invitation.token })); }
+      catch (error) {
+        if (![400, 403, 404, 409, 410].includes(error.status)) throw error;
+        return send(message.chat.id, `${error.message}\n\nНажмите «Как получить приглашение» или вернитесь в главное меню. Ваши существующие каналы не изменены.`, keyboard([...invitationHelp.reply_markup.inline_keyboard, ...homeMenu.reply_markup.inline_keyboard]));
+      }
+    }
+    const command = text.match(/^\/(start|help|profile|whoami|change|role|creators|invite|channels|cancel)(?:@\w+)?(?:\s+(\S+))?\s*$/i);
+    if (command) {
+      editingChannels.delete(String(message.from.id));
+      return handleCommand(message, command[1].toLowerCase(), command[2] || '', update.update_id);
+    }
     if (text.startsWith('/')) return send(message.chat.id, 'Неизвестная команда. Нажмите /help.');
     const actor = identity(message.from, message.chat.id);
     const context = await backend('context', actor);
     if (context.role === 'producer' && extractMessageUrls(message).length) return send(message.chat.id, 'Каналы добавляет сам креатор из своего Telegram. Нажмите «Добавить креатора» и отправьте ему приглашение.', producerMenu);
     if (!context.canSubmit) return showContext(message.chat.id, context);
     const urls = extractMessageUrls(message);
+    const edit = editingChannels.get(actor.telegramUserId);
+    if (edit) {
+      if (edit.expiresAt < Date.now()) {
+        editingChannels.delete(actor.telegramUserId);
+        return send(message.chat.id, 'Время редактирования истекло. Ничего не изменено. Откройте /channels и нажмите «Изменить ссылку» заново.');
+      }
+      if (urls.length !== 1) return send(message.chat.id, 'Пришлите одну новую ссылку именно на канал. /cancel — отменить редактирование.');
+      await backend('updateChannel', { ...actor, id: edit.id, url: urls[0] });
+      editingChannels.delete(actor.telegramUserId);
+      return send(message.chat.id, 'Ссылка изменена. Статистику нового адреса соберём заново; старые показатели к нему не переносятся.', keyboard([[{ text: 'Мои каналы', callback_data: 'menu:channels' }], ...homeMenu.reply_markup.inline_keyboard]));
+    }
     if (urls.length > 1) return send(message.chat.id, 'Отправьте каждую ссылку отдельным сообщением — так я проверю все каналы. Из этого сообщения пока ничего не добавлено.', creatorMenu);
     const url = urls[0];
     if (!url) return send(message.chat.id, 'Пришлите ссылку на свой канал или видео, начиная с https://. /channels — ваши каналы.');
@@ -126,9 +167,44 @@ export function createTelegramBotFlow({ backend, send: deliver, answerCallback, 
     if (!callback.from || message?.chat?.type !== 'private' || String(message.chat.id) !== String(callback.from.id)) return;
     const actor = identity(callback.from, message.chat.id);
     const data = String(callback.data || '');
+    const confirmation = confirmations.get(actor.telegramUserId);
+    confirmations.delete(actor.telegramUserId);
+    editingChannels.delete(actor.telegramUserId);
+    const channelAction = data.match(/^channel:(edit|delete|pause|resume|delete-confirm):([1-9]\d*)(?::([a-f0-9]{16}))?$/);
+    if (channelAction) {
+      const id = Number(channelAction[2]);
+      if (channelAction[1] === 'delete-confirm') {
+        if (!confirmation || confirmation.action !== 'delete' || confirmation.id !== id || confirmation.nonce !== channelAction[3] || confirmation.expiresAt < Date.now()) {
+          return send(message.chat.id, 'Это старое подтверждение. Каналы не изменены. Откройте /channels.');
+        }
+        await backend('deleteChannel', { ...actor, id });
+        return send(message.chat.id, 'Канал удалён из списка, сбор остановлен. При необходимости ссылку можно добавить снова.', keyboard([[{ text: 'Мои каналы', callback_data: 'menu:channels' }], ...homeMenu.reply_markup.inline_keyboard]));
+      }
+      const result = await backend('channels', actor);
+      const channel = result.channels?.find((c) => c.id === id && String(c.creatorTelegramId) === actor.telegramUserId);
+      if (!channel) return send(message.chat.id, 'Канал уже удалён или недоступен для редактирования. Откройте /channels.');
+      if (channelAction[1] === 'edit') {
+        remember(editingChannels, actor.telegramUserId, { id });
+        return send(message.chat.id, `Редактируем:\n${channel.url}\n\nПришлите новую ссылку на канал. После замены сбор начнётся заново; старые показатели не переносятся. /cancel — отмена.`);
+      }
+      if (channelAction[1] === 'delete') {
+        const nonce = randomBytes(8).toString('hex');
+        remember(confirmations, actor.telegramUserId, { action: 'delete', id, nonce });
+        return send(message.chat.id, `Удалить этот канал?\n${channel.url}\n\nОн исчезнет из списка и выгрузок, ежедневный сбор остановится. Профиль креатора и остальные каналы останутся.`, keyboard([
+          [{ text: 'Да, удалить канал', callback_data: `channel:delete-confirm:${id}:${nonce}` }], [{ text: 'Отмена', callback_data: 'menu:channels' }],
+        ]));
+      }
+      await backend('updateChannel', { ...actor, id, status: channelAction[1] === 'pause' ? 'inactive' : 'active' });
+      return channels(message.chat.id, actor);
+    }
     if (data === 'menu:home') return showContext(message.chat.id, await backend('context', actor));
     if (data === 'menu:roles') return send(message.chat.id, 'Выберите свою роль:', roles);
-    if (data === 'menu:invite-help') return send(message.chat.id, 'Попросите продюсера открыть этого бота → «Я продюсер» → «Добавить креатора» и отправить вам полученную персональную ссылку.', invitationHelp);
+    if (data === 'menu:invite-help') return send(message.chat.id, 'Попросите продюсера открыть этого бота → «Я продюсер» → «Добавить креатора» и отправить вам полученную персональную ссылку.\n\nОткройте её и нажмите «Запустить», если Telegram предложит. Или просто скопируйте ссылку целиком и отправьте сюда. Обычная ссылка на бота без приглашения не подключает к команде.', invitationHelp);
+    if (data === 'onboarding:resume') {
+      const context = await backend('context', actor);
+      return showContext(message.chat.id, !context.binding && context.role === 'creator' && context.selectedType && context.pendingInvite?.status === 'valid'
+        ? await backend('selectType', { ...actor, type: context.selectedType }) : context);
+    }
     if (data === 'menu:add-channel') {
       const context = await backend('context', actor);
       return context.canSubmit ? send(message.chat.id, 'Пришлите ссылку на свой канал или видео. По одной ссылке в сообщении. Метрики соберутся автоматически.', creatorMenu) : showContext(message.chat.id, context);
@@ -139,13 +215,24 @@ export function createTelegramBotFlow({ backend, send: deliver, answerCallback, 
     if (role) {
       const context = await backend('context', actor);
       if (context.role === role[1]) return showContext(message.chat.id, context);
-      if (context.role) return send(message.chat.id, `Переключиться в режим ${role[1] === 'producer' ? 'продюсера? Если у вас ещё нет команды, будет создана новая, пустая' : 'креатора? Ваш продюсерский профиль сохранится'}.`, keyboard([
-        [{ text: 'Да, переключиться', callback_data: `confirm-role:${role[1]}` }], [{ text: 'Отмена', callback_data: 'menu:home' }],
-      ]));
+      if (context.role) {
+        const nonce = randomBytes(8).toString('hex');
+        remember(confirmations, actor.telegramUserId, { role: role[1], nonce });
+        return send(message.chat.id, `Переключиться в режим ${role[1] === 'producer' ? 'продюсера? Если у вас ещё нет команды, будет создана новая, пустая' : 'креатора? Ваш продюсерский профиль сохранится'}.`, keyboard([
+          [{ text: 'Да, переключиться', callback_data: `confirm-role:${role[1]}:${nonce}` }], [{ text: 'Отмена', callback_data: 'menu:home' }],
+        ]));
+      }
       return showContext(message.chat.id, await backend('role', { ...actor, role: role[1] }));
     }
-    const confirmedRole = data.match(/^confirm-role:(producer|creator)$/);
-    if (confirmedRole) return showContext(message.chat.id, await backend('role', { ...actor, role: confirmedRole[1] }));
+    const confirmedRole = data.match(/^confirm-role:(producer|creator)(?::([a-f0-9]{16}))?$/);
+    if (confirmedRole) {
+      const context = await backend('context', actor);
+      if (context.role === confirmedRole[1]) return showContext(message.chat.id, context);
+      if (!confirmation || confirmation.role !== confirmedRole[1] || confirmation.nonce !== confirmedRole[2] || confirmation.expiresAt < Date.now()) {
+        return send(message.chat.id, 'Это старое подтверждение. Роль не изменена. Для переключения нажмите /role.');
+      }
+      return showContext(message.chat.id, await backend('role', { ...actor, role: confirmedRole[1] }));
+    }
     const type = data.match(/^type:(AI|UGC)$/);
     if (type) {
       const context = await backend('context', actor);

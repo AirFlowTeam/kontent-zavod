@@ -6,6 +6,7 @@ import {
   updateChannel,
   updateCreator,
   updateProducer,
+  deleteChannel,
 } from '@/db/storage';
 
 export const dynamic = 'force-dynamic';
@@ -19,6 +20,7 @@ const actions: ReadonlyMap<string, ActionHandler> = new Map([
   ['updateCreator', updateCreator],
   ['createChannel', createChannel],
   ['updateChannel', updateChannel],
+  ['deleteChannel', deleteChannel],
 ]);
 
 function json(body: unknown, status = 200) {

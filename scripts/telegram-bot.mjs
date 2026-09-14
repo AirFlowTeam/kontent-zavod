@@ -186,6 +186,7 @@ async function processLink(chatId, user, updateId, url) {
   }
   const result = await submitDescriptors(userIdentity(user), updateId, inspected.sourceKind, descriptors);
   const channel = result.channel;
+  if (channel.status === 'deleted') return sendMessage(chatId, 'Этот канал был удалён. Повтор старого действия ничего не изменил. Чтобы добавить его снова, отправьте ссылку новым сообщением.');
   if (channel.status === 'inactive') {
     return sendMessage(chatId, channel.creatorMatch
       ? `⚠️ Этот канал уже есть, но отключён. Попросите администратора включить его снова.\n${channel.normalizedUrl}`

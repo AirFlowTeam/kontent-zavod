@@ -11,6 +11,7 @@ import {
   Pencil,
   RotateCcw,
   Sparkles,
+  Trash2,
 } from 'lucide-react';
 
 import {
@@ -20,6 +21,7 @@ import {
   TypeBadge,
 } from '@/components/content-sections';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -111,6 +113,8 @@ export function ChannelCorrectionDialog({
   mutate: Mutate;
 }) {
   const [status, setStatus] = useState<Channel['status']>('active');
+  const [url, setUrl] = useState('');
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [followers, setFollowers] = useState('');
   const [totalViews, setTotalViews] = useState('');
   const [publicationCount, setPublicationCount] = useState('');
@@ -121,6 +125,8 @@ export function ChannelCorrectionDialog({
   useEffect(() => {
     if (!open || !channel) return;
     setStatus(channel.status);
+    setUrl(channel.url);
+    setConfirmDelete(false);
     setFollowers(overrideValue(channel.followersOverride));
     setTotalViews(overrideValue(channel.totalViewsOverride));
     setPublicationCount(overrideValue(channel.publicationCountOverride));
@@ -145,6 +151,7 @@ export function ChannelCorrectionDialog({
       await mutate({
         action: 'updateChannel',
         id: channel.id,
+        url,
         status,
         followersOverride: nullableNumber(followers),
         totalViewsOverride: nullableNumber(totalViews),
@@ -163,6 +170,19 @@ export function ChannelCorrectionDialog({
     }
   }
 
+  async function removeChannel() {
+    if (!channel) return;
+    setSaving(true);
+    setError('');
+    try {
+      await mutate({ action: 'deleteChannel', id: channel.id });
+      setConfirmDelete(false);
+      onClose();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Не удалось удалить канал');
+    } finally { setSaving(false); }
+  }
+
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
       <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-[620px]">
@@ -170,7 +190,7 @@ export function ChannelCorrectionDialog({
           <>
             <DialogHeader>
               <DialogTitle className="text-xl font-extrabold tracking-[-0.03em]">
-                Корректировка канала
+                Редактирование канала
               </DialogTitle>
               <DialogDescription>
                 {channel.title || channel.handle || channel.platformName}.
@@ -223,6 +243,10 @@ export function ChannelCorrectionDialog({
               </AlertDescription>
             </Alert>
             <form onSubmit={submit} className="space-y-5">
+              <FormField label="Ссылка на канал" htmlFor="edit-channel-url">
+                <Input id="edit-channel-url" type="url" required value={url} onChange={(event) => setUrl(event.target.value)} />
+              </FormField>
+              {url.trim() !== channel.url && <p className="text-sm text-muted-foreground">При замене адреса статистика нового канала будет собрана заново. Старые показатели и корректировки не переносятся.</p>}
               <div className="flex items-center justify-between gap-4">
                 <p className="text-xs font-bold uppercase tracking-[0.12em] text-muted-foreground">
                   Значения-корректировки
@@ -330,14 +354,31 @@ export function ChannelCorrectionDialog({
                 </Alert>
               )}
               <DialogFooter>
+                <Button type="button" variant="destructive" disabled={saving} onClick={() => setConfirmDelete(true)} className="sm:mr-auto">
+                  <Trash2 /> Удалить канал
+                </Button>
                 <Button type="button" variant="outline" onClick={onClose}>
                   Отмена
                 </Button>
                 <Button type="submit" disabled={saving}>
-                  {saving ? 'Сохраняем…' : 'Сохранить корректировку'}
+                  {saving ? 'Сохраняем…' : 'Сохранить изменения'}
                 </Button>
               </DialogFooter>
             </form>
+            <AlertDialog open={confirmDelete} onOpenChange={(value) => !saving && setConfirmDelete(value)}>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Удалить канал?</AlertDialogTitle>
+                  <AlertDialogDescription className="break-all">{channel.url}</AlertDialogDescription>
+                </AlertDialogHeader>
+                <p className="text-sm">Канал исчезнет из списков и выгрузок, сбор остановится. Креатор и остальные каналы сохранятся. Администратор сможет восстановить запись из архива.</p>
+                {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+                <AlertDialogFooter>
+                  <Button variant="outline" disabled={saving} onClick={() => setConfirmDelete(false)}>Отмена</Button>
+                  <Button variant="destructive" disabled={saving} onClick={removeChannel}>{saving ? 'Удаляем…' : 'Да, удалить'}</Button>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </>
         )}
       </DialogContent>
@@ -661,7 +702,7 @@ export function ChannelDetailDialog({
                   size="sm"
                   onClick={() => onCorrect(channel)}
                 >
-                  <Pencil data-icon="inline-start" /> Корректировка
+                  <Pencil data-icon="inline-start" /> Редактировать
                 </Button>
               </div>
             </DialogHeader>

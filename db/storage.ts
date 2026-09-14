@@ -471,6 +471,7 @@ export async function getDashboardData() {
       JOIN creators c ON c.id = ch.creator_id
       JOIN producers p ON p.id = c.producer_id
       JOIN platforms pf ON pf.id = ch.platform_id
+      WHERE ch.deleted_at IS NULL
       ORDER BY c.name COLLATE NOCASE, pf.id, ch.id`).bind(now, now).all<DashboardChannelRow>(),
     binding.prepare(`SELECT v.id, v.creator_id AS creatorId, c.name AS creatorName, c.type AS creatorType,
       c.producer_id AS producerId, p.name AS producerName, v.platform_id AS platformId,
@@ -683,18 +684,53 @@ export async function createChannel(input: Record<string, unknown>) {
 
 type SqlValue = string | number | null;
 
-export async function updateChannel(input: Record<string, unknown>) {
+function archiveChannelStatement(binding: D1Database, id: number, now: string, ownerId: number | null) {
+  return binding.prepare(`UPDATE creator_channels SET deleted_at = ?, status = 'inactive',
+    normalized_url = 'deleted:' || id || ':' || normalized_url, provider_channel_id = NULL,
+    next_sync_at = NULL, lease_token = NULL, lease_until = NULL, updated_at = ?
+    WHERE id = ? AND deleted_at IS NULL AND (? IS NULL OR creator_id = ?)`)
+    .bind(now, now, id, ownerId, ownerId);
+}
+
+export async function deleteChannel(input: Record<string, unknown>, ownerId: number | null = null) {
+  await ensureDatabase();
+  const id = integerId(input.id, 'Канал');
+  const existing = await db().prepare('SELECT id, deleted_at AS deletedAt FROM creator_channels WHERE id = ? AND (? IS NULL OR creator_id = ?)')
+    .bind(id, ownerId, ownerId).first<{ id: number; deletedAt: string | null }>();
+  if (!existing) throw new ChannelStorageError('Канал не найден', 404);
+  if (!existing.deletedAt) await archiveChannelStatement(db(), id, new Date().toISOString(), ownerId).run();
+  return id;
+}
+
+export async function updateChannel(input: Record<string, unknown>, ownerId: number | null = null) {
   await ensureDatabase();
   const binding = db();
   const id = integerId(input.id, 'Канал');
-  const existing = await binding.prepare('SELECT id, status FROM creator_channels WHERE id = ?')
-    .bind(id).first<{ id: number; status: Status }>();
+  const existing = await binding.prepare(`SELECT id, status, creator_id AS creatorId, normalized_url AS normalizedUrl FROM creator_channels
+    WHERE id = ? AND deleted_at IS NULL AND (? IS NULL OR creator_id = ?)`)
+    .bind(id, ownerId, ownerId).first<{ id: number; status: Status; creatorId: number; normalizedUrl: string }>();
   if (!existing) throw new ChannelStorageError('Канал не найден', 404);
-  if (hasOwn(input, 'url')) {
-    throw new ChannelStorageError('Ссылку канала нельзя заменить; отключите старый канал и добавьте новый', 400);
-  }
-
   const now = new Date().toISOString();
+  if (hasOwn(input, 'url')) {
+    const replacement = normalizeChannelUrl(input.url);
+    if (replacement.normalizedUrl !== existing.normalizedUrl) {
+      const platform = await channelPlatform(binding, replacement.platformName);
+      const status = validateStatus(input.status ?? existing.status);
+      // A different address starts its own history. Keep the old record and its
+      // Telegram receipts archived so retries cannot resurrect deleted links.
+      const results = await binding.batch([
+        binding.prepare(`INSERT INTO creator_channels
+          (creator_id, platform_id, url, normalized_url, handle, status, sync_status, next_sync_at, consecutive_failures, created_at, updated_at)
+          SELECT creator_id, ?, ?, ?, ?, ?, 'pending', ?, 0, ?, ? FROM creator_channels
+          WHERE id = ? AND normalized_url = ? AND deleted_at IS NULL AND (? IS NULL OR creator_id = ?)`)
+          .bind(platform.id, replacement.normalizedUrl, replacement.normalizedUrl, replacement.inferredHandle,
+            status, status === 'active' ? now : null, now, now, id, existing.normalizedUrl, ownerId, ownerId),
+        archiveChannelStatement(binding, id, now, ownerId),
+      ]);
+      if (!results[0]?.meta.changes) throw new ChannelStorageError('Канал уже изменён. Откройте список заново', 409);
+      return Number(results[0].meta.last_row_id);
+    }
+  }
   const changes = new Map<string, SqlValue>();
   if (hasOwn(input, 'status')) {
     const status = validateStatus(input.status);
@@ -720,8 +756,8 @@ export async function updateChannel(input: Record<string, unknown>) {
 
   changes.set('updated_at', now);
   const assignments = [...changes.keys()].map((column) => `${column} = ?`).join(', ');
-  const result = await binding.prepare(`UPDATE creator_channels SET ${assignments} WHERE id = ?`)
-    .bind(...changes.values(), id).run();
+  const result = await binding.prepare(`UPDATE creator_channels SET ${assignments} WHERE id = ? AND deleted_at IS NULL AND (? IS NULL OR creator_id = ?)`)
+    .bind(...changes.values(), id, ownerId, ownerId).run();
   if (!result.meta.changes) throw new ChannelStorageError('Канал не найден', 404);
   return id;
 }

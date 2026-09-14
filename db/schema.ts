@@ -112,6 +112,7 @@ export const creatorChannels = sqliteTable(
     providerChannelId: text('provider_channel_id'),
     handle: text('handle'),
     title: text('title'),
+    deletedAt: text('deleted_at'),
     avatarUrl: text('avatar_url'),
     followers: integer('followers'),
     totalViews: integer('total_views'),

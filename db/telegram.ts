@@ -27,6 +27,7 @@ type ChannelRow = {
   platformName: string;
   normalizedUrl: string;
   status: 'active' | 'inactive';
+  deletedAt?: string | null;
   providerChannelId: string | null;
   handle: string | null;
 };
@@ -100,7 +101,7 @@ function publicChannel(row: ChannelRow, submittedCreatorId: number, status: Subm
     id: row.id,
     normalizedUrl: row.normalizedUrl,
     platformName: row.platformName,
-    status: row.status,
+    status: row.deletedAt ? 'deleted' : row.status,
     creatorId: row.creatorId,
     creatorName: creatorMatch ? row.creatorName : null,
     creatorMatch,
@@ -114,7 +115,7 @@ async function findSubmission(binding: D1Database, id: number) {
     s.creator_id AS submittedCreatorId, s.source_kind AS sourceKind,
     s.result_status AS resultStatus, ch.id, ch.creator_id AS creatorId,
     c.name AS creatorName, pf.name AS platformName,
-    ch.normalized_url AS normalizedUrl, ch.status
+    ch.url AS normalizedUrl, ch.status, ch.deleted_at AS deletedAt
     FROM telegram_submissions s
     JOIN creator_channels ch ON ch.id = s.channel_id
     JOIN creators c ON c.id = ch.creator_id
@@ -136,14 +137,14 @@ async function findChannel(
     JOIN creators c ON c.id = ch.creator_id
     JOIN platforms pf ON pf.id = ch.platform_id`;
   if ((!providerChannelId && !handle) || !platformId) {
-    return binding.prepare(`${selection} WHERE ch.normalized_url = ?`)
+    return binding.prepare(`${selection} WHERE ch.normalized_url = ? AND ch.deleted_at IS NULL`)
       .bind(normalizedUrl).first<ChannelRow>();
   }
   const matches = await binding.prepare(`${selection}
-    WHERE ch.normalized_url = ?
+    WHERE ch.deleted_at IS NULL AND (ch.normalized_url = ?
       OR (? IS NOT NULL AND ch.platform_id = ? AND ch.provider_channel_id = ?)
       OR (? IS NOT NULL AND ch.platform_id = ?
-        AND LOWER(LTRIM(ch.handle, '@')) = LOWER(LTRIM(?, '@')))
+        AND LOWER(LTRIM(ch.handle, '@')) = LOWER(LTRIM(?, '@'))))
     ORDER BY CASE WHEN ch.normalized_url = ? THEN 0 ELSE 1 END, ch.id`)
     .bind(normalizedUrl, providerChannelId, platformId, providerChannelId,
       handle, platformId, handle, normalizedUrl).all<ChannelRow>();
@@ -230,7 +231,7 @@ export async function submitTelegramChannel(inputValue: unknown) {
       await binding.prepare(`UPDATE creator_channels SET
         provider_channel_id = COALESCE(provider_channel_id, ?),
         handle = COALESCE(handle, ?), updated_at = ?
-        WHERE id = ? AND creator_id = ?`)
+        WHERE id = ? AND creator_id = ? AND deleted_at IS NULL`)
         .bind(submittedProviderChannelId, submittedHandle, new Date().toISOString(), existing.id, linked.id).run();
     }
     return recordExisting(binding, submission, existing);

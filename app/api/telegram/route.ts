@@ -3,8 +3,9 @@ import {
   TelegramStorageError,
 } from '@/db/telegram';
 import { getTelegramContext, selectTelegramRole, createTelegramInvite, acceptTelegramInvite,
-  selectTelegramCreatorType, listTelegramChannels } from '@/db/telegram-onboarding';
+  selectTelegramCreatorType, listTelegramChannels, manageTelegramChannel } from '@/db/telegram-onboarding';
 import { authorizeSyncRequest } from '@/lib/server/sync-auth';
+import { ChannelStorageError } from '@/db/storage';
 
 export const dynamic = 'force-dynamic';
 
@@ -62,6 +63,7 @@ export async function POST(request: Request) {
     if (action === 'acceptInvite') return json({ ok: true, ...await acceptTelegramInvite(body) });
     if (action === 'selectType') return json({ ok: true, ...await selectTelegramCreatorType(body) });
     if (action === 'channels') return json({ ok: true, channels: await listTelegramChannels(body) });
+    if (action === 'updateChannel' || action === 'deleteChannel') return json({ ok: true, id: await manageTelegramChannel(body) });
     if (action === 'submit') {
       const channel = await submitTelegramChannel(body);
       return json({ ok: true, channel }, channel.resultStatus === 'created' && !channel.idempotent ? 201 : 200);
@@ -71,7 +73,7 @@ export async function POST(request: Request) {
     const message = error instanceof Error ? error.message : 'Не удалось обработать запрос Telegram';
     const duplicate = /UNIQUE constraint failed/i.test(message);
     const databaseFailure = /(?:D1_ERROR|SQLITE_|database (?:is|error)|no such (?:table|column))/i.test(message);
-    const status = error instanceof TelegramStorageError ? error.statusCode
+    const status = error instanceof TelegramStorageError || error instanceof ChannelStorageError ? error.statusCode
       : duplicate ? 409
         : databaseFailure ? 500 : 400;
     if (status >= 500) {

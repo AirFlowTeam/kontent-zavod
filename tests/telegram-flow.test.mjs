@@ -64,11 +64,11 @@ test('full bot conversation: producer, personal invitation, AI creator, link, ch
   await callback(2001, 'role:producer');
   assert.equal((await backend('context', { telegramUserId: '2001' })).role, 'creator');
   assert.match(sent.at(-1).text, /Переключиться/);
-  await callback(2001, 'confirm-role:producer');
+  await callback(2001, sent.at(-1).extra.reply_markup.inline_keyboard[0][0].callback_data);
   await callback(2001, 'type:UGC');
   assert.equal((await backend('context', { telegramUserId: '2001' })).role, 'producer');
   await callback(2001, 'role:creator');
-  await callback(2001, 'confirm-role:creator'); assert.match(sent.at(-1).text, /ИИ-контент/);
+  await callback(2001, sent.at(-1).extra.reply_markup.inline_keyboard[0][0].callback_data); assert.match(sent.at(-1).text, /ИИ-контент/);
   await callback(2001, 'bind:999'); assert.match(sent.at(-1).text, /устарела/);
   const before = sent.length;
   await flow.handleMessage({ update_id: ++update, message: { from: { id: 2001 }, chat: { id: -100, type: 'group' }, text: '/start' } });
