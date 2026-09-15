@@ -227,7 +227,7 @@ export function ChannelCorrectionDialog({
                     </strong>
                   </span>
                   <span>
-                    Ролики
+                    Публикации
                     <br />
                     <strong className="text-foreground">
                       {channel.publicationCount === null
@@ -300,7 +300,7 @@ export function ChannelCorrectionDialog({
                   />
                 </FormField>
                 <FormField
-                  label="Ролики"
+                  label="Публикации"
                   htmlFor="override-publications"
                   hint="пусто = авто"
                 >
@@ -739,7 +739,7 @@ export function ChannelDetailDialog({
                 value={metrics.totalViews ?? '—'}
               />
               <MetricTile
-                label="Ролики"
+                label="Публикации"
                 value={metrics.publicationCount ?? '—'}
               />
               <MetricTile
@@ -857,7 +857,7 @@ export function CreatorDetailDialog({
                 value={metrics.totalViewsCount ? metrics.totalViews : '—'}
               />
               <MetricTile
-                label="Ролики"
+                label="Публикации"
                 value={
                   metrics.publicationCountCount ? metrics.publicationCount : '—'
                 }
@@ -1004,7 +1004,7 @@ export function ProducerDetailDialog({
                 value={metrics.totalViewsCount ? metrics.totalViews : '—'}
               />
               <MetricTile
-                label="Ролики"
+                label="Публикации"
                 value={
                   metrics.publicationCountCount ? metrics.publicationCount : '—'
                 }

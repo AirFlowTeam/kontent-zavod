@@ -5,7 +5,7 @@ type VideoStatus = 'active' | 'deleted' | 'error';
 type CreatorType = 'UGC' | 'AI';
 type ChannelSyncStatus = 'pending' | 'success' | 'error' | 'needs_auth';
 type ChannelSyncFailureStatus = Extract<ChannelSyncStatus, 'error' | 'needs_auth'>;
-type SupportedPlatformName = 'YouTube' | 'RuTube' | 'VK' | 'TikTok' | 'Instagram';
+type SupportedPlatformName = 'YouTube' | 'RuTube' | 'VK' | 'TikTok' | 'Instagram' | 'Threads';
 
 const producersSeed = [
   [1, 'Анна', 'active', '2026-08-12T09:00:00.000Z'],
@@ -19,6 +19,7 @@ const platformsSeed = [
   [3, 'YouTube', ['youtube.com', 'youtu.be']],
   [4, 'VK', ['vk.com', 'vkvideo.ru']],
   [5, 'RuTube', ['rutube.ru']],
+  [6, 'Threads', ['threads.com', 'threads.net']],
 ] as const;
 
 const creatorsSeed = [
@@ -172,6 +173,13 @@ export function normalizeChannelUrl(value: unknown): NormalizedChannelUrl {
   }
   if (parsed.hostname === 'youtu.be') throw new Error('Короткая YouTube-ссылка ведёт на видео, а не на канал');
 
+  if (parsed.hostname === 'threads.com' || parsed.hostname === 'threads.net') {
+    if (!/^@[a-z0-9._]{1,30}$/.test(first) || segments.length !== 1) {
+      throw new Error('Укажите ссылку на Threads-профиль вида https://threads.com/@name');
+    }
+    return canonicalChannelResult(parsed, 'threads.com', [first], 'Threads', first);
+  }
+
   if (parsed.hostname === 'rutube.ru') {
     if (first === 'video' && (segments[1] ?? '').toLowerCase() === 'person' && segments[2]) {
       return canonicalChannelResult(parsed, 'rutube.ru', ['channel', segments[2]], 'RuTube', segments[2]);
@@ -208,7 +216,7 @@ export function normalizeChannelUrl(value: unknown): NormalizedChannelUrl {
     return canonicalChannelResult(parsed, parsed.hostname, [first], 'VK', first);
   }
 
-  throw new Error('Поддерживаются каналы YouTube, RuTube, VK, TikTok и Instagram');
+  throw new Error('Поддерживаются каналы YouTube, RuTube, VK, TikTok, Instagram и Threads');
 }
 
 const URL_MIGRATION_BATCH_SIZE = 25;
@@ -422,6 +430,9 @@ export async function ensureDatabase() {
     ]);
   }
 
+  // Small additive catalog update for existing databases; do not reset disabled platforms.
+  await binding.prepare("INSERT OR IGNORE INTO platforms(name,domains,status) VALUES('Threads',?,'active')")
+    .bind(JSON.stringify(['threads.com', 'threads.net'])).run();
   const currentVersion = await binding.prepare("SELECT value FROM app_meta WHERE key = 'seed_version'").first<{ value: string }>();
   if (currentVersion?.value === '2') await migrateUrlKeys(binding);
   await enforceYouTubeRetention(binding);

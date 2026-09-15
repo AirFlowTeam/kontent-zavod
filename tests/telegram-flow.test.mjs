@@ -36,9 +36,9 @@ test('full bot conversation: producer, personal invitation, AI creator, link, ch
   }
   const flow = createTelegramBotFlow({ backend, send: async (id, text, extra) => sent.push({ id, text, extra }),
     answerCallback: async () => {}, botUsername: () => 'fixture_bot',
-    processLink: async (id, user, updateId, url) => {
+    processLink: async (id, user, updateId, url, itemIndex) => {
       links.push(url);
-      return backend('submit', { telegramUserId: String(user.id), updateId, sourceKind: 'channel', channelUrl: url });
+      return backend('submit', { telegramUserId: String(user.id), updateId, itemIndex, sourceKind: 'channel', channelUrl: url });
     } });
   let update = 0;
   const message = (id, text) => flow.handleMessage({ update_id: ++update, message: { from: { id, first_name: 'Name' }, chat: { id, type: 'private' }, text } });
@@ -59,8 +59,9 @@ test('full bot conversation: producer, personal invitation, AI creator, link, ch
   await message(1001, 'https://youtube.com/@other'); assert.equal(links.length, 1);
   assert.match(sent.at(-1).text, /Каналы добавляет сам креатор/);
   await message(2001, 'https://youtube.com/@first https://youtube.com/@second');
-  assert.equal(links.length, 1);
-  assert.match(sent.at(-1).text, /каждую ссылку отдельным сообщением/);
+  assert.equal(links.length, 3);
+  assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM creator_channels').get().n, 3);
+  assert.match(sent.at(-1).text, /Список обработан/);
   await callback(2001, 'role:producer');
   assert.equal((await backend('context', { telegramUserId: '2001' })).role, 'creator');
   assert.match(sent.at(-1).text, /Переключиться/);

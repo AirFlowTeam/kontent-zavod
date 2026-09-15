@@ -14,6 +14,7 @@ from pathlib import Path
 
 fields = {
     'instagram': ['INSTAGRAM_CLIENT_ID', 'INSTAGRAM_CLIENT_SECRET'],
+    'threads': ['THREADS_CLIENT_ID', 'THREADS_CLIENT_SECRET'],
     'tiktok': ['TIKTOK_CLIENT_KEY', 'TIKTOK_CLIENT_SECRET'],
     'vk': ['VK_CLIENT_ID', 'VK_SERVICE_TOKEN'],
     'youtube': ['YOUTUBE_API_KEY'],

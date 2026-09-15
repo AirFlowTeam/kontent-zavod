@@ -113,7 +113,7 @@ export function MetricCards({ metrics }: { metrics: Metrics }) {
       featured: true,
     },
     {
-      label: 'Роликов',
+      label: 'Публикаций',
       value: formatAvailable(
         metrics.publicationCount,
         metrics.publicationCountCount,
@@ -389,7 +389,7 @@ export function CreatorTable({
                     Лайки
                   </th>
                   <th className="px-6 py-3 text-right font-semibold">
-                    Ролики
+                    Публикации
                   </th>
                 </tr>
               </thead>
@@ -475,7 +475,7 @@ export function CreatorTable({
                     </p>
                   </div>
                   <div>
-                    <p className="text-muted-foreground">Ролики</p>
+                    <p className="text-muted-foreground">Публикации</p>
                     <p className="mt-0.5 font-semibold tabular-nums">
                       {formatAvailable(
                         row.publicationCount,
@@ -703,7 +703,7 @@ export function ChannelsSection({
                     Лайки
                   </th>
                   <th className="px-4 py-3 text-right font-semibold">
-                    Ролики
+                    Публикации
                   </th>
                   <th className="px-4 py-3 font-semibold">Синхронизация</th>
                   <th className="px-4 py-3 font-semibold">Свежесть</th>
@@ -872,7 +872,7 @@ export function ChannelsSection({
                       </div>
                       <div>
                         <p className="text-[10px] text-muted-foreground">
-                          Ролики
+                          Публикации
                         </p>
                         <p className="font-semibold tabular-nums">
                           {formatChannelMetric(channelMetrics.publicationCount)}
@@ -1022,7 +1022,7 @@ export function ProducersSection({
                     </div>
                     <div className="border-t border-border pt-4">
                       <p className="text-xs text-muted-foreground">
-                        Ролики
+                        Публикации
                       </p>
                       <p className="mt-1 text-lg font-extrabold tabular-nums">
                         {formatAvailable(

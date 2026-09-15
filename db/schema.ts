@@ -216,6 +216,7 @@ export const telegramSubmissions = sqliteTable(
   {
     id: integer('id').primaryKey({ autoIncrement: true }),
     updateId: integer('update_id').notNull(),
+    itemIndex: integer('item_index').notNull().default(0),
     telegramUserId: text('telegram_user_id')
       .notNull()
       .references(() => telegramCreatorLinks.telegramUserId),
@@ -230,7 +231,7 @@ export const telegramSubmissions = sqliteTable(
     createdAt: text('created_at').notNull(),
   },
   (table) => [
-    uniqueIndex('idx_telegram_submissions_update_id').on(table.updateId),
+    uniqueIndex('idx_telegram_submissions_update_item').on(table.updateId, table.itemIndex),
     index('idx_telegram_submissions_user_created').on(table.telegramUserId, table.createdAt),
     index('idx_telegram_submissions_channel_id').on(table.channelId),
     check('chk_telegram_submissions_source_kind', sql`${table.sourceKind} IN ('channel', 'video')`),

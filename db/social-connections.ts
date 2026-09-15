@@ -98,8 +98,8 @@ export async function saveConnectTicket(token: string, input: Input) {
       vkServiceToken: Reflect.get(env, 'VK_SERVICE_TOKEN'), vkClientId: Reflect.get(env, 'VK_CLIENT_ID') });
     if (refreshed) { credentials = refreshed.credentials; expiresAt = refreshed.expiresAt; refreshedAt = new Date().toISOString(); }
   } catch (error) {
-    if (ticket.platformName === 'Instagram' && error instanceof SocialApiError && error.syncStatus === 'needs_auth') {
-      throw new TelegramStorageError('Instagram не подтвердил продление токена. Используйте «Войти через Instagram» либо действующий long-lived токен старше суток. Прежний доступ сохранён.', 400);
+    if (['Instagram', 'Threads'].includes(ticket.platformName) && error instanceof SocialApiError && error.syncStatus === 'needs_auth') {
+      throw new TelegramStorageError(`${ticket.platformName} не подтвердил продление токена. Используйте «Войти через ${ticket.platformName}» либо действующий long-lived токен старше суток. Прежний доступ сохранён.`, 400);
     }
     throw error;
   }
@@ -186,7 +186,8 @@ export async function updateCollectorConnection(input: Input) {
     }
     throw new TelegramStorageError('Доступ уже изменён владельцем', 409);
   }
-  const now = new Date().toISOString();
+  // Two refresh writes in one millisecond must still have distinct CAS versions.
+  const now = new Date(Math.max(Date.now(), Date.parse(row.updatedAt) + 1)).toISOString();
   if (input.status === 'needs_auth') {
     const result = await db().prepare(`UPDATE social_connections SET status='needs_auth',updated_at=? WHERE channel_id=? AND updated_at=? AND ${leaseGuard}`).bind(now, row.channelId, row.updatedAt, String(input.leaseToken), now).run();
     if (result.meta.changes !== 1) throw new TelegramStorageError('Доступ уже изменён владельцем', 409);

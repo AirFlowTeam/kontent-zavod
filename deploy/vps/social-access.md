@@ -12,8 +12,10 @@ AES-256-GCM `SOCIAL_VAULT_KEY`, and enables only `/connect/[64 lowercase hex cha
 without Basic Auth. These ticket URLs are bearer secrets: access/error logging is off.
 Keep all `/api/telegram` and `/api/sync` external deny rules and general Basic Auth.
 
-Creators use `/social` or the public `/api-guide` for instructions,
-`/channels` → own channel → Connect API → official platform login.
+Creators use `/guide` for the full invitation → type → links → API walkthrough,
+`/social` or the public `/api-guide` for platform steps, `/api` for their own channels.
+Up to 10 URLs per message use independent `(update_id,item_index)` receipts; failures
+do not undo other links. Only creators can submit their own API access, never producers.
 The form is one-use, expires in 10 minutes, verifies Origin, Telegram ownership,
 provider account and channel. Credentials are encrypted with owner/channel/account
 AAD, excluded from all user-facing DTOs, and available only to a current leased job.
@@ -42,8 +44,14 @@ the original vault key for recovery. Do not rotate the key without migration.
   User access + refresh + client_id + device_id required; community/service tokens
   do not support video.get. Profile ownership or community management is verified.
   Metrics cover accessible own videos in Added, not guaranteed complete Clips.
-- YouTube: Prefer one admin `YOUTUBE_API_KEY` restricted to API and VPS IP. A user
-  may also attach a key to one owned Content Factory channel. Key is a project
+- Threads: Separate Threads OAuth app with `THREADS_CLIENT_ID`, `THREADS_CLIENT_SECRET`,
+  `threads_basic` and `threads_manage_insights`. Both .com and .net profile links,
+  and /@username/post/code links, normalize to one profile. Long-lived tokens refresh
+  after 24h. Count own root posts and per-post lifetime views/likes, never profile views.
+  Reposts, replies and ghost posts excluded. App approval remains an operator prerequisite.
+- YouTube: Each creator attaches a personal Data API key restricted to API and VPS IP
+  to their own Content Factory channel. A legacy server-key fallback is preserved;
+  the normal bot path uses a creator's personal form. Key is a project
   credential, not proof of YouTube ownership. All public uploads queried for likes.
 - RuTube: No key required for public uploads/views. Public likes unavailable.
 
@@ -64,3 +72,9 @@ are unchanged. Disclosure pages require operator/legal review before app submiss
 
 All adapters are regression-tested with provider fixtures; production validation
 of authenticated APIs still requires genuine authorized platform tokens.
+
+Bulk release: apply only `0010_common_agent_brand.sql` with `migrate-bot-bulk.py`
+while all services are stopped, after verifying the backup. Older releases expect
+the former update-only unique index: do not roll back to them after receiving bulk
+messages without a reviewed receipt migration. Never restore an old database over
+new creator submissions. Nginx must also allow the narrow `/connect/oauth/threads/callback`.

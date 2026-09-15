@@ -1092,7 +1092,7 @@ function FilterFields({
           <Button variant="outline" type="button" onClick={() => { setFilter('dateFrom', moscowToday(new Date(Date.now() - 6 * 86400000))); setFilter('dateTo', moscowToday()); }}>7 дней</Button>
           <Button variant="ghost" type="button" onClick={() => { setFilter('dateFrom', ''); setFilter('dateTo', ''); }}>Текущие итоги</Button>
         </div>
-        <p className="text-sm text-muted-foreground">Даты применяются к выгрузке: прирост просмотров, роликов и лайков по ежедневным снимкам. Время — Москва. Карточки ниже показывают текущие итоги.</p>
+        <p className="text-sm text-muted-foreground">Даты применяются к выгрузке: прирост просмотров, публикаций и лайков по ежедневным снимкам. Время — Москва. Карточки ниже показывают текущие итоги.</p>
       </div>
     </div>
   );

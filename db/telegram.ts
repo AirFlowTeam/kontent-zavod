@@ -110,7 +110,16 @@ function publicChannel(row: ChannelRow, submittedCreatorId: number, status: Subm
   };
 }
 
-async function findSubmission(binding: D1Database, id: number) {
+// Fence every write, not just the initial check: role/link may change while a
+// video resolver or another request is running. Parameters: TG ID, creator ID.
+const readyWriter = `EXISTS(SELECT 1 FROM telegram_creator_links l
+  JOIN telegram_accounts a ON a.telegram_user_id=l.telegram_user_id
+  JOIN creators c ON c.id=l.creator_id JOIN producers p ON p.id=c.producer_id
+  JOIN telegram_producer_links pl ON pl.producer_id=p.id
+  WHERE l.telegram_user_id=? AND c.id=? AND a.role='creator'
+    AND l.type_confirmed_at IS NOT NULL AND c.status='active' AND p.status='active')`;
+
+async function findSubmission(binding: D1Database, id: number, itemIndex: number) {
   return binding.prepare(`SELECT s.telegram_user_id AS telegramUserId,
     s.creator_id AS submittedCreatorId, s.source_kind AS sourceKind,
     s.result_status AS resultStatus, ch.id, ch.creator_id AS creatorId,
@@ -120,7 +129,7 @@ async function findSubmission(binding: D1Database, id: number) {
     JOIN creator_channels ch ON ch.id = s.channel_id
     JOIN creators c ON c.id = ch.creator_id
     JOIN platforms pf ON pf.id = ch.platform_id
-    WHERE s.update_id = ?`).bind(id).first<SubmissionRow>();
+    WHERE s.update_id = ? AND s.item_index = ?`).bind(id, itemIndex).first<SubmissionRow>();
 }
 
 async function findChannel(
@@ -156,26 +165,37 @@ async function findChannel(
 
 async function recordExisting(
   binding: D1Database,
-  input: { updateId: number; telegramUserId: string; creatorId: number; sourceKind: SourceKind },
+  input: { updateId: number; itemIndex: number; telegramUserId: string; creatorId: number; sourceKind: SourceKind },
   channel: ChannelRow,
+  enrichment: { providerChannelId: string | null; handle: string | null } = { providerChannelId: null, handle: null },
 ) {
-  const insertion = await binding.prepare(`INSERT INTO telegram_submissions
-    (update_id, telegram_user_id, creator_id, channel_id, source_kind, result_status, created_at)
-    VALUES (?, ?, ?, ?, ?, 'existing', ?)
-    ON CONFLICT(update_id) DO NOTHING`)
-    .bind(input.updateId, input.telegramUserId, input.creatorId, channel.id, input.sourceKind, new Date().toISOString())
-    .run();
-  const recorded = await findSubmission(binding, input.updateId);
+  const now = new Date().toISOString();
+  const results = await binding.batch([binding.prepare(`INSERT INTO telegram_submissions
+    (update_id, item_index, telegram_user_id, creator_id, channel_id, source_kind, result_status, created_at)
+    SELECT ?, ?, ?, ?, ch.id, ?, 'existing', ? FROM creator_channels ch JOIN platforms pf ON pf.id=ch.platform_id
+    WHERE ch.id=? AND ch.deleted_at IS NULL AND pf.status='active' AND ${readyWriter}
+    ON CONFLICT(update_id, item_index) DO NOTHING`)
+    .bind(input.updateId, input.itemIndex, input.telegramUserId, input.creatorId, input.sourceKind, now, channel.id, input.telegramUserId, input.creatorId),
+    binding.prepare(`UPDATE creator_channels SET provider_channel_id=COALESCE(provider_channel_id,?),
+      handle=COALESCE(handle,?),updated_at=? WHERE id=? AND creator_id=? AND deleted_at IS NULL
+      AND changes()=1 AND EXISTS(SELECT 1 FROM telegram_submissions WHERE update_id=? AND item_index=? AND channel_id=?)`)
+      .bind(enrichment.providerChannelId, enrichment.handle, now, channel.id, input.creatorId, input.updateId, input.itemIndex, channel.id),
+  ]);
+  const recorded = await findSubmission(binding, input.updateId, input.itemIndex);
   if (!recorded || recorded.telegramUserId !== input.telegramUserId) {
     throw new TelegramStorageError('Это обновление Telegram уже обработано для другого пользователя', 409);
   }
-  return publicChannel(recorded, recorded.submittedCreatorId, recorded.resultStatus, !insertion.meta.changes);
+  return publicChannel(recorded, recorded.submittedCreatorId, recorded.resultStatus, !results[0].meta.changes);
 }
 
 export async function submitTelegramChannel(inputValue: unknown) {
   const input = record(inputValue);
   const telegramUserId = telegramId(input.telegramUserId, 'Пользователь Telegram');
   const telegramUpdateId = updateId(input.updateId);
+  const itemIndex = input.itemIndex === undefined ? 0 : input.itemIndex;
+  if (typeof itemIndex !== 'number' || !Number.isSafeInteger(itemIndex) || itemIndex < 0 || itemIndex >= 10) {
+    throw new TelegramStorageError('Некорректный номер ссылки в сообщении', 400);
+  }
   const submittedSourceKind = sourceKind(input.sourceKind);
   const submittedProviderChannelId = optionalIdentifier(input.providerChannelId, 'ID канала у провайдера');
   const submittedHandle = optionalIdentifier(input.handle, 'Хэндл');
@@ -183,7 +203,7 @@ export async function submitTelegramChannel(inputValue: unknown) {
   const binding = database();
 
   await requireTelegramCreatorReady(telegramUserId);
-  const previous = await findSubmission(binding, telegramUpdateId);
+  const previous = await findSubmission(binding, telegramUpdateId, itemIndex);
   if (previous) {
     if (previous.telegramUserId !== telegramUserId) {
       throw new TelegramStorageError('Это обновление Telegram уже обработано для другого пользователя', 409);
@@ -217,6 +237,7 @@ export async function submitTelegramChannel(inputValue: unknown) {
   );
   const submission = {
     updateId: telegramUpdateId,
+    itemIndex,
     telegramUserId,
     creatorId: linked.id,
     sourceKind: submittedSourceKind,
@@ -227,30 +248,25 @@ export async function submitTelegramChannel(inputValue: unknown) {
       && existing.providerChannelId !== submittedProviderChannelId) {
       throw new TelegramStorageError('Ссылка не совпадает с ранее определённым ID канала', 409);
     }
-    if ((submittedProviderChannelId && !existing.providerChannelId) || (submittedHandle && !existing.handle)) {
-      await binding.prepare(`UPDATE creator_channels SET
-        provider_channel_id = COALESCE(provider_channel_id, ?),
-        handle = COALESCE(handle, ?), updated_at = ?
-        WHERE id = ? AND creator_id = ? AND deleted_at IS NULL`)
-        .bind(submittedProviderChannelId, submittedHandle, new Date().toISOString(), existing.id, linked.id).run();
-    }
-    return recordExisting(binding, submission, existing);
+    return recordExisting(binding, submission, existing, { providerChannelId: submittedProviderChannelId, handle: submittedHandle });
   }
 
   const now = new Date().toISOString();
   try {
-    await binding.batch([
+    const writes = await binding.batch([
       binding.prepare(`INSERT INTO creator_channels
         (creator_id, platform_id, url, normalized_url, provider_channel_id, handle, status, sync_status,
           next_sync_at, consecutive_failures, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, 'active', 'pending', ?, 0, ?, ?)`)
+        SELECT ?, ?, ?, ?, ?, ?, 'active', 'pending', ?, 0, ?, ?
+        WHERE ${readyWriter} AND EXISTS(SELECT 1 FROM platforms WHERE id=? AND status='active')`)
         .bind(linked.id, platform.id, normalized.normalizedUrl, normalized.normalizedUrl,
-          submittedProviderChannelId, resolvedHandle, now, now, now),
+          submittedProviderChannelId, resolvedHandle, now, now, now, telegramUserId, linked.id, platform.id),
       binding.prepare(`INSERT INTO telegram_submissions
-        (update_id, telegram_user_id, creator_id, channel_id, source_kind, result_status, created_at)
-        SELECT ?, ?, ?, id, ?, 'created', ? FROM creator_channels WHERE normalized_url = ?`)
-        .bind(telegramUpdateId, telegramUserId, linked.id, submittedSourceKind, now, normalized.normalizedUrl),
+        (update_id, item_index, telegram_user_id, creator_id, channel_id, source_kind, result_status, created_at)
+        SELECT ?, ?, ?, ?, id, ?, 'created', ? FROM creator_channels WHERE normalized_url = ? AND deleted_at IS NULL AND changes()=1`)
+        .bind(telegramUpdateId, itemIndex, telegramUserId, linked.id, submittedSourceKind, now, normalized.normalizedUrl),
     ]);
+    if (writes[0].meta.changes !== 1 || writes[1].meta.changes !== 1) throw new TelegramStorageError('Профиль или площадка изменены. Откройте /start и попробуйте снова.', 409);
   } catch (error) {
     const message = error instanceof Error ? error.message : '';
     const racedChannel = /UNIQUE constraint failed: creator_channels\.(?:normalized_url|platform_id)/i.test(message)
@@ -258,7 +274,7 @@ export async function submitTelegramChannel(inputValue: unknown) {
       : null;
     if (racedChannel) return recordExisting(binding, submission, racedChannel);
     const racedSubmission = /UNIQUE constraint failed: telegram_submissions\.update_id/i.test(message)
-      ? await findSubmission(binding, telegramUpdateId)
+      ? await findSubmission(binding, telegramUpdateId, itemIndex)
       : null;
     if (racedSubmission?.telegramUserId === telegramUserId) {
       return publicChannel(racedSubmission, racedSubmission.submittedCreatorId, racedSubmission.resultStatus, true);

@@ -173,7 +173,7 @@ function creatorSheet(type: 'UGC' | 'AI', rows: SummaryRow[]) {
         'Подписчики',
         'Просмотры',
         'Лайки',
-        'Ролики',
+        'Публикации',
       ],
       ...matching.map((row) => [
         row.name,
@@ -228,7 +228,7 @@ export function createGoogleSheetsWorkbook(data: ReportExportData) {
   const summaryRows: Cell[][] = [
     ['Показатель', 'Значение', '', '', '', '', ''],
     ['Период', data.period ? `${data.period.from} — ${data.period.to} включительно, Москва (UTC+3)` : 'Текущие накопленные итоги'],
-    ['Расчёт', data.period ? 'Прирост счётчиков между ежедневными снимками. Это не только просмотры новых роликов. Снимки могут отстоять от границы до 36 часов; точное время указано на листе «Снимки периода». Подписчики — на конец периода. Корректировки текущих итогов не применяются.' : 'Текущие показатели с учётом ручных корректировок. Просмотры — не уникальный охват.'],
+    ['Расчёт', data.period ? 'Прирост счётчиков между ежедневными снимками. Это не только просмотры новых публикаций. Снимки могут отстоять от границы до 36 часов; точное время указано на листе «Снимки периода». Подписчики — на конец периода. Корректировки текущих итогов не применяются.' : 'Текущие показатели с учётом ручных корректировок. Просмотры — не уникальный охват.'],
     ['Каналов в текущей выборке', data.metrics.channelCount],
     ['Активных каналов', activeCount],
     ['Синхронизированы', successCount],
@@ -244,7 +244,7 @@ export function createGoogleSheetsWorkbook(data: ReportExportData) {
       data.metrics.totalViewsCount ? data.metrics.totalViews : 'Нет данных',
     ],
     [
-      'Роликов',
+      'Публикаций',
       data.metrics.publicationCountCount
         ? data.metrics.publicationCount
         : 'Нет данных',
@@ -254,7 +254,7 @@ export function createGoogleSheetsWorkbook(data: ReportExportData) {
       data.metrics.totalLikesCount ? data.metrics.totalLikes : 'Нет данных',
     ],
     ['Каналов с просмотрами', data.metrics.totalViewsCount],
-    ['Каналов с числом роликов', data.metrics.publicationCountCount],
+    ['Каналов с числом публикаций', data.metrics.publicationCountCount],
     ['Каналов с лайками', data.metrics.totalLikesCount],
     ['UGC-креаторов', data.ugc.creatorCount],
     ['UGC-каналов', data.ugc.channelCount],
@@ -270,7 +270,7 @@ export function createGoogleSheetsWorkbook(data: ReportExportData) {
     ],
     [
       'Примечание',
-      'Пустая ячейка означает отсутствие данных, а не ноль. Итоги — только по каналам с доступным показателем. Ролики — счётчик видео площадки; фотографии Instagram не включаются.',
+      'Пустая ячейка означает отсутствие данных, а не ноль. Итоги — только по каналам с доступным показателем. Публикации — видео площадки, а для Threads — основные посты (текст, фото, видео, карусели) без репостов, ответов и ghost posts. Фотографии Instagram не включаются.',
     ],
     ['', '', '', '', '', '', ''],
     [
@@ -280,7 +280,7 @@ export function createGoogleSheetsWorkbook(data: ReportExportData) {
       'Подписчики',
       'Просмотры',
       'Лайки',
-      'Ролики',
+      'Публикации',
     ],
     ...data.producerRows.map((row) => [
       row.name,
@@ -317,7 +317,7 @@ export function createGoogleSheetsWorkbook(data: ReportExportData) {
           'Подписчики',
           'Просмотры',
           'Лайки',
-          'Ролики',
+          'Публикации',
           'Статус канала',
           'Статус синхронизации',
           'Последняя синхронизация',
@@ -358,7 +358,7 @@ export function createGoogleSheetsWorkbook(data: ReportExportData) {
   ];
 
   if (data.period) sheets.push({ name: 'Снимки периода', widths: [26, 54, 26, 26, 20, 20, 20, 20, 20, 20, 80], rows: [
-    ['Креатор', 'Канал', 'Снимок начала (UTC)', 'Снимок конца (UTC)', 'Просмотры в начале', 'Просмотры в конце', 'Ролики в начале', 'Ролики в конце', 'Лайки в начале', 'Лайки в конце', 'Полнота данных'],
+    ['Креатор', 'Канал', 'Снимок начала (UTC)', 'Снимок конца (UTC)', 'Просмотры в начале', 'Просмотры в конце', 'Публикации в начале', 'Публикации в конце', 'Лайки в начале', 'Лайки в конце', 'Полнота данных'],
     ...data.channels.map((channel) => { const p = channel.periodData; return [channel.creatorName, channel.url, p?.baselineAt ?? '', p?.endAt ?? '', p?.startViews ?? '', p?.endViews ?? '', p?.startVideos ?? '', p?.endVideos ?? '', p?.startLikes ?? '', p?.endLikes ?? '', p?.note ?? 'Истории нет']; }),
   ] });
   return createWorkbook(sheets);

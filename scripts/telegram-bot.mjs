@@ -142,13 +142,14 @@ async function sendMessage(chatId, text, extra = {}) {
 
 
 
-async function submitDescriptors(identity, updateId, sourceKind, descriptors) {
+async function submitDescriptors(identity, updateId, sourceKind, descriptors, itemIndex) {
   let validationError = null;
   for (const item of descriptors) {
     try {
       return await backendRequest('submit', {
         telegramUserId: identity.telegramUserId,
         updateId,
+        itemIndex,
         sourceKind,
         channelUrl: item.url,
         providerChannelId: item.providerChannelId ?? null,
@@ -165,11 +166,11 @@ async function submitDescriptors(identity, updateId, sourceKind, descriptors) {
   throw validationError ?? new ServiceError('Не удалось определить канал по этой ссылке', 422, 0, true);
 }
 
-async function processLink(chatId, user, updateId, url) {
+async function processLink(chatId, user, updateId, url, itemIndex = 0) {
   const inspected = inspectSubmittedUrl(url);
   if (!inspected.supported) {
     return sendMessage(chatId, inspected.reason === 'platform'
-      ? 'Поддерживаются ссылки YouTube, RuTube, VK, TikTok и Instagram.'
+      ? `Ссылка ${itemIndex + 1} не добавлена. Поддерживаются YouTube, RuTube, VK, TikTok, Instagram и Threads. Пришлите полный адрес своего профиля.`
       : 'Не вижу корректную ссылку. Пришлите её целиком, начиная с https://');
   }
 
@@ -184,21 +185,24 @@ async function processLink(chatId, user, updateId, url) {
   if (!descriptors.length) {
     throw new ServiceError('Не удалось определить автора по ролику. Пришлите ссылку на сам канал.', 422, 0, true);
   }
-  const result = await submitDescriptors(userIdentity(user), updateId, inspected.sourceKind, descriptors);
+  const result = await submitDescriptors(userIdentity(user), updateId, inspected.sourceKind, descriptors, itemIndex);
   const channel = result.channel;
+  const nextSteps = { reply_markup: { inline_keyboard: [
+    ...(channel.creatorMatch && channel.platformName !== 'RuTube' ? [[{ text: `Подключить мой ${channel.platformName}`, callback_data: `social:connect:${channel.id}` }], [{ text: 'Как получить доступ · пошагово', callback_data: `social:help:${channel.platformName}` }]] : []),
+    [{ text: '＋ Добавить ещё ссылки', callback_data: 'menu:add-channel' }],
+    [{ text: 'Мои каналы', callback_data: 'menu:channels' }],
+  ] } };
   if (channel.status === 'deleted') return sendMessage(chatId, 'Этот канал был удалён. Повтор старого действия ничего не изменил. Чтобы добавить его снова, отправьте ссылку новым сообщением.');
   if (channel.status === 'inactive') {
     return sendMessage(chatId, channel.creatorMatch
-      ? `⚠️ Этот канал уже есть, но отключён. Попросите администратора включить его снова.\n${channel.normalizedUrl}`
+      ? `⚠️ Этот канал уже есть, но сбор приостановлен. Откройте «Мои каналы» → «Возобновить сбор».\n${channel.normalizedUrl}`
       : `⚠️ Этот канал уже есть в платформе, но отключён. Ничего не менял.\n${channel.normalizedUrl}`);
   }
   if (channel.resultStatus === 'created') {
-    return sendMessage(chatId, `✅ Канал добавлен к «${channel.creatorName}»\n${channel.normalizedUrl}\n\nПервые показатели появятся после проверки, затем обновляются раз в сутки. Можно прислать следующий канал.`, {
-      reply_markup: { inline_keyboard: [[{ text: 'Мои каналы', callback_data: 'menu:channels' }], [{ text: '⌂ Главное меню', callback_data: 'menu:home' }]] },
-    });
+    return sendMessage(chatId, `✅ Канал добавлен к «${channel.creatorName}»\n${channel.normalizedUrl}\n\n${channel.platformName === 'RuTube' ? 'Ключ не нужен: первая проверка уже в очереди.' : 'Шаг 4 — подключите личный доступ кнопкой ниже. Для этого канала ключи вводите только вы, не продюсер.'}\nПоказатели обновляются раз в сутки. Можно прислать следующий канал.`, nextSteps);
   }
   if (channel.creatorMatch) {
-    return sendMessage(chatId, `✅ Этот канал уже привязан к «${channel.creatorName}»\n${channel.normalizedUrl}\n\nПовторно добавлять его не нужно.`);
+    return sendMessage(chatId, `✅ Этот канал уже привязан к «${channel.creatorName}»\n${channel.normalizedUrl}\n\nПовторно добавлять его не нужно. Можно проверить доступ или добавить другие ссылки.`, nextSteps);
   }
   return sendMessage(chatId, `⚠️ Этот канал уже привязан к другому креатору. Ничего не менял.\n${channel.normalizedUrl}`);
 }
@@ -272,6 +276,8 @@ async function main() {
       { command: 'role', description: 'Моя роль' },
       { command: 'help', description: 'Как пользоваться ботом' },
       { command: 'social', description: 'API и инструкции всех соцсетей' },
+      { command: 'guide', description: 'Пошагово: от приглашения до каналов' },
+      { command: 'api', description: 'Подключить мой доступ к соцсетям' },
     ],
     scope: { type: 'all_private_chats' },
   });

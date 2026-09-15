@@ -8,6 +8,8 @@ const SUPPORTED_HOSTS = new Set([
   'vm.tiktok.com',
   'vt.tiktok.com',
   'instagram.com',
+  'threads.com',
+  'threads.net',
 ]);
 
 const MAX_SAFE_TELEGRAM_USER_ID = BigInt(Number.MAX_SAFE_INTEGER);
@@ -127,6 +129,14 @@ export function inspectSubmittedUrl(value) {
     return videoResult();
   }
   if (host === 'youtu.be') return videoResult();
+
+  if (host === 'threads.com' || host === 'threads.net') {
+    if (/^@[a-z0-9._]{1,30}$/.test(first)
+      && (segments.length === 1 || (segments.length === 3 && segments[1] === 'post' && /^[A-Za-z0-9_-]+$/.test(segments[2])))) {
+      return channelResult(`https://threads.com/${first}`, segments.length === 1 ? 'channel' : 'video');
+    }
+    return { supported: false, reason: 'invalid', candidates: [] };
+  }
 
   if (host === 'rutube.ru') {
     if (first === 'video' && (segments[1] ?? '').toLowerCase() === 'person' && segments[2]) {
@@ -259,6 +269,7 @@ export function directChannelDescriptor(value) {
   }
   if (host === 'tiktok.com' && first.startsWith('@')) return descriptor(url, null, first);
   if (host === 'instagram.com' && first) return descriptor(url, null, first);
+  if (host === 'threads.com' && first.startsWith('@')) return descriptor(url, null, first);
   if (host === 'vk.com' || host === 'vkvideo.ru') {
     const personal = first.match(/^id(\d+)$/i);
     const community = first.match(/^(?:club|public)(\d+)$/i);

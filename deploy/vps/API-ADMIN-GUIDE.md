@@ -7,6 +7,41 @@
 в боте открывает свой канал → «Подключить API» → официальный вход в соцсеть.
 Платформа получает токены, проверяет аккаунт, шифрует доступ и запускает сбор.
 
+Личные API-доступы вводят **только сами креаторы** из своего Telegram.
+Продюсер не собирает и не загружает их ключи. Серверные App ID / App Secret ниже —
+настройка приложения сервиса, а не личный API-доступ креатора.
+В боте `/guide` ведёт от приглашения до ссылок и API; `/api` открывает свои каналы.
+До 10 ссылок в сообщении: каждый результат независим, повтор не создаёт дубли.
+
+## Threads (новая площадка)
+
+1. В Meta for Developers добавьте к приложению продукт / use case Threads API.
+   Используйте именно Threads App ID и Threads App Secret, не Instagram App ID.
+2. Добавьте точный callback:
+   `https://kontent-zavod.217-60-183-146.sslip.io:21443/connect/oauth/threads/callback`
+3. Требуются `threads_basic` и `threads_manage_insights`. Для внешних креаторов
+   получите требуемое Meta одобрение/Advanced Access; тестовые роли не заменяют review.
+4. В конфигураторе выберите `threads`: задайте `THREADS_CLIENT_ID` и
+   `THREADS_CLIENT_SECRET`. `THREADS_OAUTH_ENABLED=true` — только после настройки
+   и разрешения площадки. Перезапустите app и sync, не меняя бот-токен и пароль.
+5. Креатор отправляет `threads.com/@имя` или `threads.net/@имя` (также поддерживается
+   `/@имя/post/код`), затем сам нажимает `/api` → канал → официальный вход Threads.
+   Ключи приходят автоматически, пересылать их продюсеру не требуется.
+6. Проверьте пустой профиль, профиль с текстом/каруселью/видео, отказ в статистике
+   и повторное подключение. Подключение должно соответствовать username канала.
+
+Токен меняется на long-lived и продлевается после 24 часов. Готовый long-lived
+Threads-токен можно импортировать самим креатором через персональную форму после
+24 часов, когда можно проверить refresh. Instagram-токен не подходит.
+Считаются основные собственные посты и их lifetime views/likes; репосты, ответы
+и ghost posts исключаются. Просмотры профиля из user insights не подменяют просмотры
+постов. Карусель — одна публикация. Данные по отдельным постам не сохраняются в БД.
+
+Официальные источники:
+[OAuth и токены](https://developers.facebook.com/documentation/threads/get-started/get-access-tokens-and-permissions/),
+[посты](https://developers.facebook.com/documentation/threads/retrieve-and-discover-posts/retrieve-posts/),
+[статистика](https://developers.facebook.com/documentation/threads/insights/).
+
 Регистрация приложения, заполнение настроек и одобрение площадки — разные этапы.
 Развёртывание кода не означает получение разрешений. Не включайте массовый
 доступ до одобрения и проверки реальным аккаунтом. Тестовые режимы используйте
@@ -130,8 +165,9 @@ TikTok может требовать выданного площадкой фа�
    Data API v3 → Credentials → Create credentials → API key.
 2. Ограничьте ключ YouTube Data API v3 и IP сервера `217.60.183.146`.
    Не выбирайте ограничение HTTP referrer для серверных запросов.
-3. Конфигуратор `youtube` запросит `YOUTUBE_API_KEY`. Один общий ключ используется
-   для всех публичных YouTube-каналов. Креаторам достаточно ссылок.
+3. Ключ вводит сам креатор: бот → `/api` → свой YouTube → защищённая персональная
+   форма → «Проверить и подключить». Продюсер не собирает ключи. Старый серверный
+   fallback `YOUTUBE_API_KEY` сохранён для совместимости, но не нужен этому пути.
 4. Проверьте квоту проекта и первый полный сбор. При исчерпании квоты часть
    публичных показателей может прийти из резервного парсера, но лайки потребуют API.
 
@@ -150,6 +186,7 @@ TikTok может требовать выданного площадкой фа�
 
 ```sh
 python3 /opt/kontent-zavod/current/deploy/vps/configure-api.py instagram
+python3 /opt/kontent-zavod/current/deploy/vps/configure-api.py threads
 python3 /opt/kontent-zavod/current/deploy/vps/configure-api.py tiktok
 python3 /opt/kontent-zavod/current/deploy/vps/configure-api.py vk
 python3 /opt/kontent-zavod/current/deploy/vps/configure-api.py youtube

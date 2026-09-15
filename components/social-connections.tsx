@@ -15,7 +15,7 @@ export function SocialConnections({ channels }: { channels: Channel[] }) {
   }, []);
   return <div className="space-y-5">
     <div className="rounded-3xl border bg-card p-5"><h2 className="text-xl font-semibold">Подключение через Telegram</h2>
-      <p className="mt-2 text-sm text-muted-foreground">Креатор открывает /channels → свой канал → «Подключить API» → официальный вход в соцсеть. Ключи сохраняются автоматически за креатором и каналом. Первая проверка — после подключения, далее ежедневно. Ручной ввод готовых токенов остаётся дополнительным вариантом. Для YouTube можно использовать один общий ключ, RuTube работает без ключа.</p>
+      <p className="mt-2 text-sm text-muted-foreground">Креатор открывает /channels → свой канал → «Подключить API» → официальный вход в соцсеть. Ключи сохраняются автоматически за креатором и каналом. Первая проверка — после подключения, далее ежедневно. Ручной ввод готовых токенов остаётся дополнительным вариантом. API вводят только сами креаторы в своих персональных формах; продюсеры не загружают чужие ключи. В боте /guide — пошаговый старт, /api — подключение. Поддерживается Threads; RuTube работает без ключа.</p>
       <a className="inline-block mt-3 text-primary underline" href="https://t.me/contentlsbot" target="_blank" rel="noreferrer">Открыть бота</a>
       <a className="inline-block mt-3 ml-5 text-primary underline" href={setup?.guideUrl || '/api-guide'} target="_blank" rel="noreferrer">Гайд для рассылки креаторам</a>
     </div>
