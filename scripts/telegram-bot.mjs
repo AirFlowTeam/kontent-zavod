@@ -278,8 +278,7 @@ async function main() {
   const me = await telegramRequest('getMe');
   botUsername = me.username;
   await telegramRequest('deleteWebhook', { drop_pending_updates: false });
-  await telegramRequest('setMyCommands', {
-    commands: [
+  const commands = [
       { command: 'start', description: 'Начать работу' },
       { command: 'profile', description: 'Мой профиль и продюсер' },
       { command: 'creators', description: 'Мои креаторы' },
@@ -290,9 +289,11 @@ async function main() {
       { command: 'social', description: 'API и инструкции всех соцсетей' },
       { command: 'guide', description: 'Пошагово: от приглашения до каналов' },
       { command: 'api', description: 'Подключить мой доступ к соцсетям' },
-    ],
-    scope: { type: 'all_private_chats' },
-  });
+    ];
+  await telegramRequest('setMyCommands', { commands, scope: { type: 'all_private_chats' } });
+  for (const adminId of adminUserIds) {
+    await telegramRequest('setMyCommands', { commands: [{ command: 'admin', description: 'Все функции и команды платформы' }, ...commands], scope: { type: 'chat', chat_id: adminId } });
+  }
   console.log(JSON.stringify({
     message: 'telegram bot started',
     username: me.username ?? null,

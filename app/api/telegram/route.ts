@@ -7,6 +7,8 @@ import { getTelegramContext, selectTelegramRole, createTelegramInvite, acceptTel
 import { authorizeSyncRequest } from '@/lib/server/sync-auth';
 import { ChannelStorageError } from '@/db/storage';
 import { createConnectTicket, disconnectSocial } from '@/db/social-connections';
+import { telegramAdminAction } from '@/db/telegram-admin';
+import { isTelegramAdmin } from '@/lib/server/telegram-admin';
 
 export const dynamic = 'force-dynamic';
 
@@ -52,9 +54,10 @@ export async function POST(request: Request) {
     }
     const body = objectBody(parsed);
     action = typeof body.action === 'string' ? body.action : '';
+    if (action.startsWith('admin')) return json({ ok: true, ...await telegramAdminAction(body) });
     if (action === 'context') {
       const context = await getTelegramContext(body);
-      return json({ ok: true, ...context });
+      return json({ ok: true, ...context, isAdmin: isTelegramAdmin(body.telegramUserId) });
     }
     if (action === 'bind') {
       return json({ error: 'Выбор чужого профиля отключён. Используйте персональное приглашение продюсера' }, 403);

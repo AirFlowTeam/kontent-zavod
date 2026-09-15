@@ -1,5 +1,6 @@
 import { env } from 'cloudflare:workers';
 import { ensureDatabase, updateChannel, deleteChannel } from '@/db/storage';
+import { isTelegramAdmin } from '@/lib/server/telegram-admin';
 
 export class TelegramStorageError extends Error {
   constructor(message: string, readonly statusCode: number) {
@@ -144,8 +145,12 @@ export async function selectTelegramRole(input: Input) {
 
 export async function createTelegramInvite(input: Input) {
   const account = await accountFor(input);
-  const producer = await producerFor(account.telegramUserId);
-  if (account.role !== 'producer' || producer?.status !== 'active') throw new TelegramStorageError('Доступно только вашему продюсерскому аккаунту', 403);
+  const admin = input.action === 'adminInvite' && isTelegramAdmin(account.telegramUserId);
+  if (!admin && input.producerId !== undefined) throw new TelegramStorageError('Нельзя выбрать чужого продюсера', 403);
+  const producer = admin ? await db().prepare(`SELECT p.id,p.name,p.status FROM producers p
+    JOIN telegram_producer_links l ON l.producer_id=p.id WHERE p.id=?`).bind(Number(input.producerId) || 0)
+    .first<{ id: number; name: string; status: string }>() : await producerFor(account.telegramUserId);
+  if ((!admin && account.role !== 'producer') || producer?.status !== 'active') throw new TelegramStorageError('Нужен активный продюсер с Telegram-привязкой', 403);
   const updateId = Number(input.updateId);
   if (!Number.isSafeInteger(updateId) || updateId < 0) throw new TelegramStorageError('Некорректный updateId', 400);
   const creatorId = input.creatorId === undefined ? null : Number(input.creatorId);

@@ -4,6 +4,7 @@ import { invitationFromMessage } from './telegram-invitation.mjs';
 import { randomBytes } from 'node:crypto';
 import { socialInstructions } from '../lib/social-instructions.mjs';
 import { channelInstructions, linkPrompt, MAX_LINKS_PER_MESSAGE } from '../lib/channel-instructions.mjs';
+import { createTelegramAdminFlow } from './telegram-admin-flow.mjs';
 
 const keyboard = (rows) => ({ reply_markup: { inline_keyboard: rows } });
 export const homeMenu = keyboard([[{ text: '⌂ Главное меню', callback_data: 'menu:home' }]]);
@@ -29,6 +30,7 @@ function identity(user, chatId) {
 
 export function createTelegramBotFlow({ backend, send: deliver, answerCallback, processLink, botUsername }) {
   const send = (chatId, text, extra = homeMenu) => deliver(chatId, text, extra);
+  const adminFlow = createTelegramAdminFlow({ backend, send, botUsername, showPersonal: showContext });
   const confirmations = new Map();
   const editingChannels = new Map();
   const expiresAt = () => Date.now() + 10 * 60_000;
@@ -163,6 +165,7 @@ export function createTelegramBotFlow({ backend, send: deliver, answerCallback, 
     confirmations.delete(String(message.from.id));
     const invitation = invitationFromMessage(message, botUsername());
     if (invitation) {
+      adminFlow.cancel(message.from.id);
       editingChannels.delete(String(message.from.id));
       if (invitation.kind !== 'invite') return send(message.chat.id, invitation.kind === 'multiple'
         ? 'В сообщении несколько приглашений. Отправьте только личную ссылку от своего продюсера.'
@@ -173,6 +176,7 @@ export function createTelegramBotFlow({ backend, send: deliver, answerCallback, 
         return send(message.chat.id, `${error.message}\n\nНажмите «Как получить приглашение» или вернитесь в главное меню. Ваши существующие каналы не изменены.`, keyboard([...invitationHelp.reply_markup.inline_keyboard, ...homeMenu.reply_markup.inline_keyboard]));
       }
     }
+    if (await adminFlow.handleMessage(message, identity(message.from, message.chat.id))) return;
     const command = text.match(/^\/(start|help|guide|api|profile|whoami|change|role|creators|invite|channels|cancel|social)(?:@\w+)?(?:\s+(\S+))?\s*$/i);
     if (command) {
       editingChannels.delete(String(message.from.id));
@@ -219,6 +223,7 @@ export function createTelegramBotFlow({ backend, send: deliver, answerCallback, 
     const confirmation = confirmations.get(actor.telegramUserId);
     confirmations.delete(actor.telegramUserId);
     editingChannels.delete(actor.telegramUserId);
+    if (await adminFlow.handleCallback(callback, actor, update.update_id)) return;
     if (data === 'menu:social') return socialMenu(message.chat.id);
     if (data === 'menu:guide') return guide(message.chat.id, actor);
     if (data === 'menu:connections') return connectionMenu(message.chat.id, actor);
