@@ -176,6 +176,7 @@ export function createTelegramBotFlow({ backend, send: deliver, answerCallback, 
         return send(message.chat.id, `${error.message}\n\nНажмите «Как получить приглашение» или вернитесь в главное меню. Ваши существующие каналы не изменены.`, keyboard([...invitationHelp.reply_markup.inline_keyboard, ...homeMenu.reply_markup.inline_keyboard]));
       }
     }
+    if (text.startsWith('/')) editingChannels.delete(String(message.from.id));
     if (await adminFlow.handleMessage(message, identity(message.from, message.chat.id))) return;
     const command = text.match(/^\/(start|help|guide|api|profile|whoami|change|role|creators|invite|channels|cancel|social)(?:@\w+)?(?:\s+(\S+))?\s*$/i);
     if (command) {

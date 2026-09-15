@@ -116,3 +116,24 @@ test('public guide is self-contained and does not require protected application 
   assert.equal(response.status, 200); assert.equal(response.headers.has('WWW-Authenticate'), false);
   assert.match(html, /<style>/); assert.doesNotMatch(html, /<script|rel="stylesheet"/);
 });
+
+test('admin start and menu cancel a pending personal channel edit', async (t) => {
+  for (const command of ['/start', '/admin']) {
+    const h = storageHarness(); t.after(h.close); h.env.TELEGRAM_ADMIN_USER_IDS = adminId;
+    const { context } = await onboard(h, { creatorId: adminId });
+    const s = h.load('db/storage.ts'), request = api(h);
+    const id = await s.createChannel({ creatorId: context.binding.id, url: 'https://youtube.com/@keep-original' });
+    let submissions = 0;
+    const flow = createTelegramBotFlow({ backend: async (action, fields) => {
+      const r = await request(action, fields);
+      if (r.status >= 400) throw new Error(r.body.error);
+      return r.body;
+    }, send: async () => {}, answerCallback: async () => {}, processLink: async () => { submissions += 1; }, botUsername: () => 'fixture_bot' });
+    const from = { id: Number(adminId) }, chat = { id: Number(adminId), type: 'private' };
+    await flow.handleCallback({ update_id: 100, callback_query: { id: '100', from, message: { chat }, data: `channel:edit:${id}` } });
+    await flow.handleMessage({ update_id: 101, message: { from, chat, text: command } });
+    await flow.handleMessage({ update_id: 102, message: { from, chat, text: 'https://youtube.com/@new-link' } });
+    assert.equal(submissions, 1, command);
+    assert.equal(h.sqlite.prepare('SELECT normalized_url FROM creator_channels WHERE id=?').get(id).normalized_url, 'https://youtube.com/@keep-original');
+  }
+});
