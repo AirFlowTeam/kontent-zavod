@@ -2,6 +2,7 @@
 
 import { createTelegramBotFlow, homeMenu } from './telegram-bot-flow.mjs';
 import { runYtDlp } from './yt-dlp-runner.mjs';
+import { createTelegramUpdateQueue, limitConcurrency } from './telegram-update-queue.mjs';
 
 import {
   channelDescriptorsFromInfo,
@@ -29,6 +30,7 @@ backendUrl.hash = '';
 
 const botApiBase = `https://api.telegram.org/bot${token}`;
 const stopController = new AbortController();
+const resolveVideo = limitConcurrency(2, { signal: stopController.signal });
 let stopping = false;
 let botUsername = '';
 const flow = createTelegramBotFlow({ backend: backendRequest, send: sendMessage,
@@ -71,7 +73,13 @@ async function telegramRequest(method, payload = {}, timeoutMs = 20_000) {
     if (response.ok && result?.ok) return result.result;
     const description = typeof result?.description === 'string' ? result.description : '';
     if (method === 'editMessageText' && /message is not modified/i.test(description)) return true;
-    const status = response.status || result?.error_code || 502;
+    const status = !response.ok ? response.status : result?.error_code || 502;
+    if (method === 'sendMessage' && [400, 403].includes(status)
+        && /bot was blocked|user is deactivated|chat not found|bot can't initiate|bot was kicked/i.test(description)) {
+      const error = new ServiceError('Получатель недоступен', status);
+      error.telegramDeliveryPermanent = true;
+      throw error;
+    }
     const retryAfter = Math.max(1, Math.min(60, Number(result?.parameters?.retry_after ?? 0) || 1));
     if (status === 429 && attempt < 2) {
       await wait(retryAfter * 1_000);
@@ -177,8 +185,8 @@ async function processLink(chatId, user, updateId, url, itemIndex = 0) {
   await sendMessage(chatId, inspected.needsResolution ? 'Определяю автора ролика…' : 'Проверяю канал…');
   let descriptors = inspected.candidates.map(directChannelDescriptor).filter(Boolean);
   if (inspected.needsResolution) {
-    const metadata = await runYtDlp(normalizeVkSourceUrl(url), { binary: ytDlpBin, timeoutMs: ytDlpTimeoutMs, video: true,
-      cookieFile: process.env.YTDLP_COOKIES_FILE, proxyUrl: process.env.PARSER_PROXY_URL, signal: stopController.signal })
+    const metadata = await resolveVideo(() => runYtDlp(normalizeVkSourceUrl(url), { binary: ytDlpBin, timeoutMs: ytDlpTimeoutMs, video: true,
+      cookieFile: process.env.YTDLP_COOKIES_FILE, proxyUrl: process.env.PARSER_PROXY_URL, signal: stopController.signal }))
       .catch(() => { throw new ServiceError('Не удалось определить автора по ролику. Пришлите ссылку на канал.', 422, 0, true); });
     descriptors = channelDescriptorsFromInfo(metadata, url);
   }
@@ -223,6 +231,10 @@ async function handleUpdate(update) {
     else if (update.callback_query) await flow.handleCallback(update);
   } catch (error) {
     if (stopping) return;
+    if (error.telegramDeliveryPermanent) {
+      console.error(JSON.stringify({ message: 'telegram recipient unavailable', status: error.status }));
+      return;
+    }
     const chatId = update.message?.chat?.id ?? update.callback_query?.message?.chat?.id;
     const known = error instanceof ServiceError;
     const userMessage = known && error.userSafe
@@ -289,20 +301,26 @@ async function main() {
 
   let offset = 0;
   let failures = 0;
+  const queue = createTelegramUpdateQueue({ handle: handleUpdate, onRetry: (error, retryInMs) => {
+    if (!stopping) console.error(JSON.stringify({ message: 'telegram update retry', status: error instanceof ServiceError ? error.status : 500, retryInMs }));
+  } });
   while (!stopping) {
     try {
+      queue.pump();
+      offset = queue.nextOffset();
+      if (queue.full) { await wait(1_000); continue; }
       const updates = await telegramRequest('getUpdates', {
         offset,
+        limit: 100,
         timeout: 25,
         allowed_updates: ['message', 'callback_query'],
       }, 35_000);
-      for (const update of updates) {
-        if (!Number.isSafeInteger(update.update_id)) continue;
-        await handleUpdate(update);
-        offset = Math.max(offset, update.update_id + 1);
-        if (stopping) break;
-      }
+      if (stopping) break;
+      queue.accept(updates);
       failures = 0;
+      // An unfinished prefix is returned again by Telegram immediately. Retain
+      // it for crash recovery without busy-polling or rerunning later successes.
+      if (queue.size) await wait(1_000);
     } catch (error) {
       if (stopping) break;
       failures += 1;
@@ -316,6 +334,7 @@ async function main() {
       await wait(backoff);
     }
   }
+  queue.close();
   console.log(JSON.stringify({ message: 'telegram bot stopped' }));
 }
 
