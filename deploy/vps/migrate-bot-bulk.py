@@ -20,9 +20,21 @@ if hashlib.sha256(raw).hexdigest() != 'a98fc7b53aa1076f0f3d9adcfec5cc6954005a2a3
 os.umask(0o077)
 with sqlite3.connect(args.database) as db:
     db.execute('PRAGMA foreign_keys=ON')
-    columns = [r[1] for r in db.execute('PRAGMA table_info(telegram_submissions)')]
-    if 'update_id' not in columns or 'item_index' in columns:
+    columns = {r[1]: r for r in db.execute('PRAGMA table_info(telegram_submissions)')}
+    indexes = {r[1]: r for r in db.execute('PRAGMA index_list(telegram_submissions)')}
+    legacy_index = indexes.get('idx_telegram_submissions_update_id')
+    if ('update_id' not in columns or not legacy_index or not legacy_index[2]
+            or legacy_index[4] or 'idx_telegram_submissions_update_item' in indexes
+            or [r[2] for r in db.execute('PRAGMA index_info(idx_telegram_submissions_update_id)')] != ['update_id']):
         raise SystemExit('Prerequisite missing or already migrated')
+    # A safe application rollback retains this additive column and restores the
+    # legacy unique index. Resume only that exact state, never an arbitrary schema.
+    resume = 'item_index' in columns
+    if resume:
+        column = columns['item_index']
+        if (column[2].upper() != 'INTEGER' or column[3] != 1 or column[4] != '0'
+                or db.execute('SELECT 1 FROM telegram_submissions WHERE item_index IS NULL OR item_index != 0 LIMIT 1').fetchone()):
+            raise SystemExit('Unexpected partial migration state')
     if db.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
         raise SystemExit('Database integrity check failed')
     before = db.execute('SELECT count(*) FROM telegram_submissions').fetchone()[0]
@@ -32,6 +44,8 @@ with sqlite3.connect(args.database) as db:
             raise SystemExit('Backup integrity check failed')
     db.execute('BEGIN IMMEDIATE')
     for statement in raw.decode().split('--> statement-breakpoint'):
+        if resume and statement.strip().startswith('ALTER TABLE'):
+            continue
         db.execute(statement.strip())
     if db.execute('SELECT count(*) FROM telegram_submissions WHERE item_index=0').fetchone()[0] != before:
         raise RuntimeError('Legacy receipt count changed')

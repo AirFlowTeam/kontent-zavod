@@ -56,3 +56,36 @@ test('bulk receipt migration preserves legacy update IDs and enables multiple it
   } finally { migrated.close(); original.close(); }
   assert.notEqual(spawnSync('python3', args).status, 0);
 });
+
+test('bulk migration resumes only verified rollback state and rejects ambiguous state', (t) => {
+  const dir = mkdtempSync(resolve(tmpdir(), 'kontent-bulk-resume-test-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const root = resolve(import.meta.dirname, '..');
+  for (const scenario of ['rollback', 'nonzero', 'nullable', 'wrong-index']) {
+    const database = resolve(dir, `${scenario}.sqlite`), backup = resolve(dir, `${scenario}-before.sqlite`);
+    const db = new DatabaseSync(database);
+    db.exec(`CREATE TABLE telegram_submissions(update_id INTEGER NOT NULL,
+      item_index INTEGER ${scenario === 'nullable' ? '' : 'NOT NULL'} DEFAULT 0);
+      CREATE UNIQUE INDEX idx_telegram_submissions_update_id ON telegram_submissions(${scenario === 'wrong-index' ? 'item_index' : 'update_id'});
+      INSERT INTO telegram_submissions VALUES(777, ${scenario === 'nonzero' ? 1 : 0});`);
+    db.close();
+    const args = [resolve(root, 'deploy/vps/migrate-bot-bulk.py'), database, resolve(root, 'drizzle/0010_common_agent_brand.sql'), backup];
+    const result = spawnSync('python3', args, { encoding: 'utf8' });
+    if (scenario !== 'rollback') {
+      assert.notEqual(result.status, 0, scenario);
+      assert.equal(existsSync(backup), false);
+      continue;
+    }
+    assert.equal(result.status, 0, result.stderr);
+    const migrated = new DatabaseSync(database), original = new DatabaseSync(backup);
+    try {
+      assert.deepEqual({ ...migrated.prepare('SELECT * FROM telegram_submissions').get() }, { update_id: 777, item_index: 0 });
+      migrated.exec('INSERT INTO telegram_submissions VALUES(777,1)');
+      assert.throws(() => migrated.exec('INSERT INTO telegram_submissions VALUES(777,1)'));
+      assert.ok(original.prepare('PRAGMA index_list(telegram_submissions)').all().some((i) => i.name === 'idx_telegram_submissions_update_id'));
+      assert.equal(original.prepare('SELECT count(*) n FROM telegram_submissions').get().n, 1);
+    } finally { migrated.close(); original.close(); }
+    assert.notEqual(spawnSync('python3', [...args.slice(0, -1), resolve(dir, 'rerun.sqlite')]).status, 0);
+    assert.equal(existsSync(resolve(dir, 'rerun.sqlite')), false);
+  }
+});
