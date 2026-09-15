@@ -44,9 +44,9 @@ export function createTelegramBotFlow({ backend, send: deliver, answerCallback, 
   }
   async function connectionMenu(chatId, actor, platform) {
     const context = await backend('context', actor);
-    if (context.role === 'producer') return send(chatId, 'API подключают сами креаторы из своих Telegram-аккаунтов. Отправьте им приглашение и попросите открыть «Подключить мой API». Токены продюсеру пересылать не нужно.', producerMenu);
+    if (context.role === 'producer' && !context.dualRole) return send(chatId, 'API подключают сами креаторы из своих Telegram-аккаунтов. Отправьте им приглашение и попросите открыть «Подключить мой API». Токены продюсеру пересылать не нужно.', producerMenu);
     if (!context.canSubmit) return showContext(chatId, context);
-    const result = await backend('channels', actor);
+    const result = await backend('channels', { ...actor, scope: 'own' });
     const own = (result.channels || []).filter((c) => String(c.creatorTelegramId) === actor.telegramUserId && (!platform || c.platformName === platform));
     if (!own.length) return send(chatId, `${platform ? `Сначала добавьте свой канал ${platform}.` : 'Сначала добавьте хотя бы один канал.'}\n\n${linkPrompt}`, platformsKeyboard());
     const rows = own.filter((c) => c.platformName !== 'RuTube').map((c) => [{ text: `${c.connectionStatus === 'connected' ? '✓' : 'Подключить'} ${c.platformName} · ${c.title || c.url.split('/').at(-1)}`.slice(0, 60), callback_data: `social:connect:${c.id}` }]);
@@ -73,6 +73,20 @@ export function createTelegramBotFlow({ backend, send: deliver, answerCallback, 
   }
   async function showContext(chatId, context) {
     if (context.ownInvite) return send(chatId, 'Это приглашение для вашего креатора. Отправьте ему ссылку — свою роль менять не нужно.');
+    if (context.dualRole && (context.producer || context.binding)) {
+      const inactiveCreator = context.binding && (context.binding.creatorStatus !== 'active' || context.binding.producerStatus !== 'active');
+      const needsType = context.binding && !context.binding.typeConfirmedAt && !inactiveCreator;
+      const notice = [context.producer?.status === 'inactive' ? 'Продюсерский профиль отключён в платформе.' : '',
+        inactiveCreator ? 'Профиль креатора или его продюсер отключён в платформе.' : needsType ? 'Чтобы добавлять свои каналы, подтвердите тип контента кнопкой ниже. Он выбирается один раз.'
+          : context.binding && !context.binding.producerTelegramId ? 'Для своих каналов требуется Telegram-привязка продюсера креатора в платформе.' : ''].filter(Boolean).join('\n');
+      return send(chatId, `${context.canProduce && context.canSubmit ? 'Вы — продюсер и креатор одновременно.' : 'Ваш личный кабинет'}\n\nПродюсер: ${context.producer?.name || 'профиль ещё не создан'}\nКреатор: ${context.binding?.name || 'профиль ещё не создан'}${context.binding?.typeConfirmedAt ? `\nТип контента: ${context.binding.type === 'AI' ? 'ИИ-контент' : 'UGC'}` : ''}\n\nПереключать роль не нужно. Личные каналы и каналы команды — в отдельных списках.${notice ? `\n\n${notice}` : '\nПриглашайте креаторов в команду и присылайте свои ссылки в этот же чат.'}`, keyboard([
+        ...(context.canProduce ? [[{ text: '＋ Пригласить креатора', callback_data: 'invite:new' }], [{ text: 'Мои креаторы', callback_data: 'menu:creators' }, { text: 'Каналы команды', callback_data: 'menu:team-channels' }]] : !context.producer ? [[{ text: 'Добавить профиль продюсера', callback_data: 'admin:mode:producer' }]] : []),
+        ...(context.canSubmit ? [[{ text: '＋ Мои ссылки', callback_data: 'menu:add-channel' }, { text: 'Мои каналы', callback_data: 'menu:channels' }], [{ text: 'Подключить мой API', callback_data: 'menu:connections' }]]
+          : needsType ? [(context.selectedType ? [context.selectedType] : ['AI', 'UGC']).map((type) => ({ text: `Подтвердить ${type === 'AI' ? 'ИИ-контент' : 'UGC'}`, callback_data: `admin:type:${type}` }))]
+            : !context.binding ? [[{ text: 'Добавить мой профиль креатора', callback_data: 'admin:mode:creator' }]] : []),
+        [{ text: 'Админ-меню', callback_data: 'admin:home' }],
+      ]));
+    }
     if (!context.role) return send(chatId, 'Добро пожаловать в «Контент-завод». Выберите свою роль:', roles);
     if (context.role === 'producer') {
       if (context.producer?.status !== 'active') return send(chatId, 'Продюсерский профиль отключён. Обратитесь к администратору.');
@@ -99,7 +113,7 @@ export function createTelegramBotFlow({ backend, send: deliver, answerCallback, 
 
   async function showCreators(chatId, actor) {
     const context = await backend('context', actor);
-    if (context.role !== 'producer' || context.producer?.status !== 'active') return showContext(chatId, context);
+    if (!(context.canProduce ?? (context.role === 'producer' && context.producer?.status === 'active'))) return showContext(chatId, context);
     if (!context.creators?.length) return send(chatId, 'Креаторов пока нет. Создайте приглашение и отправьте его креатору.', producerMenu);
     for (let i = 0; i < context.creators.length; i += 10) {
       const page = context.creators.slice(i, i + 10);
@@ -111,13 +125,13 @@ export function createTelegramBotFlow({ backend, send: deliver, answerCallback, 
   async function invite(chatId, actor, updateId, creatorId) {
     const result = await backend('invite', { ...actor, updateId, ...(creatorId ? { creatorId } : {}) });
     const link = `https://t.me/${botUsername()}?start=c_${result.invite.token}`;
-    return send(chatId, `Приглашение креатора в вашу команду:\n${link}\n\nОтправьте эту персональную ссылку только нужному креатору. Она действует 7 дней и используется одним Telegram-аккаунтом. После входа креатор выберет ИИ / UGC и добавит каналы.`, producerMenu);
+    return send(chatId, `Приглашение креатора в вашу команду:\n${link}\n\nОтправьте эту персональную ссылку только нужному креатору. Она действует 7 дней и используется одним Telegram-аккаунтом. После входа креатор выберет ИИ / UGC и добавит каналы.`, keyboard([...producerMenu.reply_markup.inline_keyboard, [{ text: 'Личный кабинет', callback_data: 'menu:profile' }]]));
   }
 
-  async function channels(chatId, actor, page = 0) {
+  async function channels(chatId, actor, page = 0, scope) {
     const context = await backend('context', actor);
-    const creatorMode = context.role === 'creator' && context.canSubmit;
-    const result = await backend('channels', actor);
+    const creatorMode = context.canSubmit;
+    const result = await backend('channels', { ...actor, ...(scope ? { scope } : {}) });
     if (!result.channels?.length) return send(chatId, 'Каналов пока нет. Креатор может прислать ссылки на свои каналы или видео. Нажмите «Добавить ссылки», если нужна пошаговая помощь.', keyboard([[{ text: '＋ Добавить ссылки', callback_data: 'menu:add-channel' }], ...homeMenu.reply_markup.inline_keyboard]));
     const count = result.channels.length;
     const pageCount = Math.ceil(count / 5);
@@ -137,8 +151,8 @@ export function createTelegramBotFlow({ backend, send: deliver, answerCallback, 
       await send(chatId, `${channel.title || channel.platformName}\n${channel.url}\nКреатор: ${channel.creatorName} (${telegramContact(channel.creatorTelegramId, channel.creatorTelegramUsername)})\nПродюсер: ${channel.producerName} (${telegramContact(channel.producerTelegramId, channel.producerTelegramUsername)})\nТип: ${channel.creatorType}\n\nПросмотры: ${number(channel.totalViews)}\n${channel.platformName === 'Threads' ? 'Посты' : 'Ролики'}: ${number(channel.publicationCount)}\nЛайки: ${number(channel.totalLikes)}\nСтатус: ${channel.status === 'inactive' ? 'сбор приостановлен' : status}\nОбновлено: ${updated} (МСК)${help ? `\n\n${help}` : ''}`, { reply_markup: { inline_keyboard: controls } });
     }
     const buttons = [];
-    if (page > 0) buttons.push({ text: '← Назад', callback_data: `channels:${page - 1}` });
-    if (page + 1 < pageCount) buttons.push({ text: 'Далее →', callback_data: `channels:${page + 1}` });
+    if (page > 0) buttons.push({ text: '← Назад', callback_data: `${scope === 'team' ? 'team-channels' : 'channels'}:${page - 1}` });
+    if (page + 1 < pageCount) buttons.push({ text: 'Далее →', callback_data: `${scope === 'team' ? 'team-channels' : 'channels'}:${page + 1}` });
     await send(chatId, `Страница ${page + 1} из ${pageCount}.${count === 50 ? ' Первые 50 каналов; полный список — в платформе.' : ''}\nНедоступно — площадка пока не передала показатель, это не ноль.`, keyboard([...(buttons.length ? [buttons] : []), [{ text: '⌂ Главное меню', callback_data: 'menu:home' }]]));
   }
 
@@ -150,7 +164,10 @@ export function createTelegramBotFlow({ backend, send: deliver, answerCallback, 
     if (command === 'api') return connectionMenu(chatId, actor);
     if (command === 'help') return send(chatId,
       'Продюсер: /start → «Я продюсер» → «Добавить креатора» → передать ему персональное приглашение.\n\nКреатор: открыть приглашение → выбрать ИИ-контент или UGC → прислать ссылки на свои каналы или видео.\n\nСтатистика обновляется раз в сутки. /channels — каналы, показатели и статусы. /creators — команда продюсера. /profile — профиль. /role — переключить свою роль.\n\nПоддерживаются YouTube, RuTube, VK, TikTok, Instagram, Threads. /guide — пошаговый старт, /api — подключить свой доступ. Закрытые данные требуют доступа площадки; недоступные показатели не заменяются нулями.');
-    if (command === 'role' || command === 'change') return send(chatId, 'Выберите свою роль. Чужие профили недоступны:', roles);
+    if (command === 'role' || command === 'change') {
+      const context = await backend('context', actor);
+      return context.dualRole ? showContext(chatId, context) : send(chatId, 'Выберите свою роль. Чужие профили недоступны:', roles);
+    }
     if (command === 'creators') return showCreators(chatId, actor);
     if (command === 'invite') return invite(chatId, actor, updateId);
     if (command === 'channels') return channels(chatId, actor);
@@ -186,7 +203,7 @@ export function createTelegramBotFlow({ backend, send: deliver, answerCallback, 
     if (text.startsWith('/')) return send(message.chat.id, 'Неизвестная команда. Нажмите /help.');
     const actor = identity(message.from, message.chat.id);
     const context = await backend('context', actor);
-    if (context.role === 'producer' && extractMessageUrls(message).length) return send(message.chat.id, 'Каналы добавляет сам креатор из своего Telegram. Нажмите «Добавить креатора» и отправьте ему приглашение.', producerMenu);
+    if (context.role === 'producer' && !context.dualRole && extractMessageUrls(message).length) return send(message.chat.id, 'Каналы добавляет сам креатор из своего Telegram. Нажмите «Добавить креатора» и отправьте ему приглашение.', producerMenu);
     if (!context.canSubmit) return showContext(message.chat.id, context);
     const urls = extractMessageUrls(message);
     const edit = editingChannels.get(actor.telegramUserId);
@@ -279,7 +296,10 @@ export function createTelegramBotFlow({ backend, send: deliver, answerCallback, 
       return channels(message.chat.id, actor);
     }
     if (data === 'menu:home') return showContext(message.chat.id, await backend('context', actor));
-    if (data === 'menu:roles') return send(message.chat.id, 'Выберите свою роль:', roles);
+    if (data === 'menu:roles') {
+      const context = await backend('context', actor);
+      return context.dualRole ? showContext(message.chat.id, context) : send(message.chat.id, 'Выберите свою роль:', roles);
+    }
     if (data === 'menu:invite-help') return send(message.chat.id, 'Попросите продюсера открыть этого бота → «Я продюсер» → «Добавить креатора» и отправить вам полученную персональную ссылку.\n\nОткройте её и нажмите «Запустить», если Telegram предложит. Или просто скопируйте ссылку целиком и отправьте сюда. Обычная ссылка на бота без приглашения не подключает к команде.', invitationHelp);
     if (data === 'onboarding:resume') {
       const context = await backend('context', actor);
@@ -292,9 +312,12 @@ export function createTelegramBotFlow({ backend, send: deliver, answerCallback, 
     }
     const channelPage = data.match(/^channels:(\d{1,2})$/);
     if (channelPage) return channels(message.chat.id, actor, Number(channelPage[1]));
+    const teamPage = data.match(/^team-channels:(\d{1,2})$/);
+    if (data === 'menu:team-channels' || teamPage) return channels(message.chat.id, actor, Number(teamPage?.[1] || 0), 'team');
     const role = data.match(/^role:(producer|creator)$/);
     if (role) {
       const context = await backend('context', actor);
+      if (context.dualRole && context.canProduce && context.canSubmit) return showContext(message.chat.id, context);
       if (context.role === role[1]) return showContext(message.chat.id, context);
       if (context.role) {
         const nonce = randomBytes(8).toString('hex');

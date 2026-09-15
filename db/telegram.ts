@@ -2,6 +2,7 @@ import { env } from 'cloudflare:workers';
 
 import { ensureDatabase, normalizeChannelUrl } from '@/db/storage';
 import { TelegramStorageError, requireTelegramCreatorReady } from '@/db/telegram-onboarding';
+import { isTelegramAdmin } from '@/lib/server/telegram-admin';
 export { TelegramStorageError } from '@/db/telegram-onboarding';
 
 type CreatorType = 'UGC' | 'AI';
@@ -111,12 +112,13 @@ function publicChannel(row: ChannelRow, submittedCreatorId: number, status: Subm
 }
 
 // Fence every write, not just the initial check: role/link may change while a
-// video resolver or another request is running. Parameters: TG ID, creator ID.
+// video resolver or another request is running. Parameters: TG ID, creator ID,
+// server-computed simultaneous-role capability. Ownership is always mandatory.
 const readyWriter = `EXISTS(SELECT 1 FROM telegram_creator_links l
   JOIN telegram_accounts a ON a.telegram_user_id=l.telegram_user_id
   JOIN creators c ON c.id=l.creator_id JOIN producers p ON p.id=c.producer_id
   JOIN telegram_producer_links pl ON pl.producer_id=p.id
-  WHERE l.telegram_user_id=? AND c.id=? AND a.role='creator'
+  WHERE l.telegram_user_id=? AND c.id=? AND (a.role='creator' OR ?=1)
     AND l.type_confirmed_at IS NOT NULL AND c.status='active' AND p.status='active')`;
 
 async function findSubmission(binding: D1Database, id: number, itemIndex: number) {
@@ -175,7 +177,7 @@ async function recordExisting(
     SELECT ?, ?, ?, ?, ch.id, ?, 'existing', ? FROM creator_channels ch JOIN platforms pf ON pf.id=ch.platform_id
     WHERE ch.id=? AND ch.deleted_at IS NULL AND pf.status='active' AND ${readyWriter}
     ON CONFLICT(update_id, item_index) DO NOTHING`)
-    .bind(input.updateId, input.itemIndex, input.telegramUserId, input.creatorId, input.sourceKind, now, channel.id, input.telegramUserId, input.creatorId),
+    .bind(input.updateId, input.itemIndex, input.telegramUserId, input.creatorId, input.sourceKind, now, channel.id, input.telegramUserId, input.creatorId, Number(isTelegramAdmin(input.telegramUserId))),
     binding.prepare(`UPDATE creator_channels SET provider_channel_id=COALESCE(provider_channel_id,?),
       handle=COALESCE(handle,?),updated_at=? WHERE id=? AND creator_id=? AND deleted_at IS NULL
       AND changes()=1 AND EXISTS(SELECT 1 FROM telegram_submissions WHERE update_id=? AND item_index=? AND channel_id=?)`)
@@ -260,7 +262,7 @@ export async function submitTelegramChannel(inputValue: unknown) {
         SELECT ?, ?, ?, ?, ?, ?, 'active', 'pending', ?, 0, ?, ?
         WHERE ${readyWriter} AND EXISTS(SELECT 1 FROM platforms WHERE id=? AND status='active')`)
         .bind(linked.id, platform.id, normalized.normalizedUrl, normalized.normalizedUrl,
-          submittedProviderChannelId, resolvedHandle, now, now, now, telegramUserId, linked.id, platform.id),
+          submittedProviderChannelId, resolvedHandle, now, now, now, telegramUserId, linked.id, Number(isTelegramAdmin(telegramUserId)), platform.id),
       binding.prepare(`INSERT INTO telegram_submissions
         (update_id, item_index, telegram_user_id, creator_id, channel_id, source_kind, result_status, created_at)
         SELECT ?, ?, ?, ?, id, ?, 'created', ? FROM creator_channels WHERE normalized_url = ? AND deleted_at IS NULL AND changes()=1`)

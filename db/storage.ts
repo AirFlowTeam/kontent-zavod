@@ -1,4 +1,5 @@
 import { env } from 'cloudflare:workers';
+import { isTelegramAdmin } from '@/lib/server/telegram-admin';
 
 type Status = 'active' | 'inactive';
 type VideoStatus = 'active' | 'deleted' | 'error';
@@ -501,6 +502,10 @@ export async function getDashboardData() {
       a.role, a.selected_type AS selectedType, l.creator_id AS creatorId,
       CASE WHEN a.role = 'producer' THEN pl.producer_id ELSE COALESCE(c.producer_id, i.producer_id) END AS producerId, p.name AS producerName,
       pl.producer_id AS ownProducerId, c.producer_id AS creatorProducerId,
+      CASE WHEN l.type_confirmed_at IS NOT NULL AND c.status='active'
+        AND EXISTS(SELECT 1 FROM producers cp JOIN telegram_producer_links cpl ON cpl.producer_id=cp.id
+          WHERE cp.id=c.producer_id AND cp.status='active') AND EXISTS
+        (SELECT 1 FROM producers own WHERE own.id=pl.producer_id AND own.status='active') THEN 1 ELSE 0 END AS bothProfilesActive,
       team.telegram_user_id AS producerTelegramId, pa.username AS producerTelegramUsername,
       (SELECT COUNT(*) FROM creator_channels ch WHERE ch.creator_id = l.creator_id AND ch.deleted_at IS NULL) AS channelCount,
       CASE WHEN a.role IS NULL THEN 'Выбирает роль'
@@ -524,7 +529,8 @@ export async function getDashboardData() {
   return {
     producers: producers.results,
     creators: creators.results,
-    telegramAccounts: telegramAccounts.results,
+    telegramAccounts: telegramAccounts.results.map((account) => ({ ...account,
+      stage: account.bothProfilesActive && isTelegramAdmin(account.telegramUserId) ? 'Продюсер и креатор' : account.stage })),
     platforms: platforms.results.map((platform) => ({
       ...platform,
       domains: JSON.parse(String(platform.domains)) as string[],

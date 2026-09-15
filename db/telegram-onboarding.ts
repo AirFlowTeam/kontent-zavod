@@ -103,6 +103,8 @@ export async function getTelegramContext(input: Input) {
   const [producer, binding] = await Promise.all([producerFor(account.telegramUserId), creatorFor(account.telegramUserId)]);
   const pending = account.pendingInviteHash ? await findInvite(account.pendingInviteHash) : null;
   const role = account.role ?? (binding ? 'creator' : null);
+  const dualRole = isTelegramAdmin(account.telegramUserId);
+  const canProduce = Boolean(producer?.status === 'active' && (role === 'producer' || dualRole));
   const creators = producer?.status === 'active'
     ? (await db().prepare(`SELECT c.id, c.name, c.type, c.status,
       t.telegram_user_id AS telegramUserId, t.username AS telegramUsername,
@@ -110,12 +112,12 @@ export async function getTelegramContext(input: Input) {
       FROM creators c LEFT JOIN telegram_creator_links t ON t.creator_id = c.id
       WHERE c.producer_id = ? ORDER BY c.name, c.id LIMIT 100`).bind(producer.id).all()).results
     : [];
-  return { role, selectedType: account.selectedType, producer, binding, creators,
+  return { role, dualRole, canProduce, selectedType: account.selectedType, producer, binding, creators,
     pendingInvite: pending ? { producerName: pending.producerName, expiresAt: pending.expiresAt,
       status: pending.redeemedBy && pending.redeemedBy !== account.telegramUserId ? 'used'
         : pending.expiresAt <= new Date().toISOString() && !pending.redeemedBy ? 'expired'
           : pending.producerStatus !== 'active' ? 'inactive' : 'valid' } : null,
-    canSubmit: role === 'creator' && Boolean(binding?.typeConfirmedAt && binding.producerTelegramId
+    canSubmit: (role === 'creator' || dualRole) && Boolean(binding?.typeConfirmedAt && binding.producerTelegramId
       && binding.creatorStatus === 'active' && binding.producerStatus === 'active') };
 }
 
@@ -150,7 +152,7 @@ export async function createTelegramInvite(input: Input) {
   const producer = admin ? await db().prepare(`SELECT p.id,p.name,p.status FROM producers p
     JOIN telegram_producer_links l ON l.producer_id=p.id WHERE p.id=?`).bind(Number(input.producerId) || 0)
     .first<{ id: number; name: string; status: string }>() : await producerFor(account.telegramUserId);
-  if ((!admin && account.role !== 'producer') || producer?.status !== 'active') throw new TelegramStorageError('Нужен активный продюсер с Telegram-привязкой', 403);
+  if ((!admin && account.role !== 'producer' && !isTelegramAdmin(account.telegramUserId)) || producer?.status !== 'active') throw new TelegramStorageError('Нужен активный продюсер с Telegram-привязкой', 403);
   const updateId = Number(input.updateId);
   if (!Number.isSafeInteger(updateId) || updateId < 0) throw new TelegramStorageError('Некорректный updateId', 400);
   const creatorId = input.creatorId === undefined ? null : Number(input.creatorId);
@@ -297,7 +299,9 @@ export async function requireTelegramCreatorReady(userId: string) {
 export async function listTelegramChannels(input: Input) {
   const context = await getTelegramContext(input);
   const identity = telegramIdentity(input);
-  const producerMode = context.role === 'producer' && context.producer?.status === 'active';
+  if (input.scope !== undefined && input.scope !== 'own' && input.scope !== 'team') throw new TelegramStorageError('Некорректный список каналов', 400);
+  const producerMode = input.scope === 'team' || (input.scope !== 'own' && context.canProduce && !context.canSubmit);
+  if (producerMode && !context.canProduce) throw new TelegramStorageError('Команда недоступна', 403);
   if (!producerMode && !context.canSubmit) throw new TelegramStorageError('Завершите регистрацию через /start', 409);
   return (await db().prepare(`SELECT ch.id, ch.normalized_url AS url, ch.title, pf.name AS platformName,
     sc.status AS connectionStatus, sc.username AS connectionUsername, sc.expires_at AS connectionExpiresAt,

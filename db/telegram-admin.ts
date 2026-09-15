@@ -1,7 +1,7 @@
 import { env } from 'cloudflare:workers';
 import { getDashboardData, updateChannel, deleteChannel } from '@/db/storage';
 import { isTelegramAdmin } from '@/lib/server/telegram-admin';
-import { telegramIdentity, TelegramStorageError, getTelegramContext, selectTelegramRole, createTelegramInvite } from '@/db/telegram-onboarding';
+import { telegramIdentity, TelegramStorageError, getTelegramContext, selectTelegramRole, selectTelegramCreatorType, createTelegramInvite } from '@/db/telegram-onboarding';
 
 type Input = Record<string, unknown>;
 export function requireTelegramAdmin(input: Input) {
@@ -23,7 +23,14 @@ export async function telegramAdminAction(input: Input) {
   if (input.action === 'adminInvite') return { invite: await createTelegramInvite(input) };
   if (input.action === 'adminCreator') {
     const context = await getTelegramContext(input);
-    if (context.binding) return selectTelegramRole({ ...input, role: 'creator' });
+    if (context.binding) {
+      if (!context.producer) await selectTelegramRole({ ...input, role: 'producer' });
+      if (!context.binding.typeConfirmedAt && (input.type === 'AI' || input.type === 'UGC')) {
+        await selectTelegramRole({ ...input, role: 'creator' });
+        return selectTelegramCreatorType(input);
+      }
+      return getTelegramContext(input);
+    }
     if (input.type !== 'AI' && input.type !== 'UGC') throw new TelegramStorageError('Выберите ИИ-контент или UGC', 400);
     const producer = (await selectTelegramRole({ ...input, role: 'producer' })).producer!;
     const now = new Date().toISOString(), name = `${(actor.displayName || actor.username || 'Администратор').slice(0, 45)} · TG ${actor.id}`;

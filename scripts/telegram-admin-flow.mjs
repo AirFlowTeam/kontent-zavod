@@ -15,10 +15,10 @@ export function createTelegramAdminFlow({ backend, send, botUsername, showPerson
   };
   async function home(chatId, actor) {
     const { counts } = await backend('adminRead', actor);
-    await send(chatId, `Администратор · ${actor.telegramUserId}\n\nПользователи: ${counts.users}\nПродюсеры: ${counts.producers}\nКреаторы: ${counts.creators}\nКаналы: ${counts.channels}\n\nЗдесь видны все команды. Можно менять ссылки, приостанавливать сбор и удалять каналы. Для личных ссылок и API выберите «Режим креатора». Чужие ключи подключают только их владельцы.`, keyboard([
+    await send(chatId, `Администратор · ${actor.telegramUserId}\n\nПользователи: ${counts.users}\nПродюсеры: ${counts.producers}\nКреаторы: ${counts.creators}\nКаналы: ${counts.channels}\n\nЗдесь видны все команды. Можно менять ссылки, приостанавливать сбор и удалять каналы. В личном кабинете вы можете быть продюсером и креатором одновременно. Чужие ключи подключают только их владельцы.`, keyboard([
       [{ text: labels.users, callback_data: 'admin:list:users:0' }, { text: labels.creators, callback_data: 'admin:list:creators:0' }],
       [{ text: labels.producers, callback_data: 'admin:list:producers:0' }, { text: labels.channels, callback_data: 'admin:list:channels:0' }],
-      [{ text: 'Режим продюсера', callback_data: 'admin:mode:producer' }, { text: 'Режим креатора', callback_data: 'admin:mode:creator' }],
+      [{ text: 'Я продюсер и креатор · личный кабинет', callback_data: 'admin:personal' }],
       [{ text: 'Инструкции всех площадок', callback_data: 'menu:social' }],
     ]));
   }
@@ -75,6 +75,10 @@ export function createTelegramAdminFlow({ backend, send, botUsername, showPerson
     if (!data.startsWith('admin:')) return false;
     await backend('adminRead', actor); // Every button is checked server-side, including stale keyboards.
     if (data === 'admin:home') await home(chatId, actor);
+    else if (data === 'admin:personal') {
+      const context = await backend('context', actor);
+      await showPersonal(chatId, context.producer || context.binding ? context : await backend('role', { ...actor, role: 'producer' }));
+    }
     else if (data === 'admin:mode:producer') await showPersonal(chatId, await backend('role', { ...actor, role: 'producer' }));
     else if (data === 'admin:mode:creator') {
       const context = await backend('context', actor);

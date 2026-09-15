@@ -1,6 +1,7 @@
 import { env } from 'cloudflare:workers';
 import { telegramIdentity, requireTelegramCreatorReady, TelegramStorageError } from '@/db/telegram-onboarding';
 import { inspectAccess, parseCredentials, refreshAccess, verifyReadAccess, SocialApiError } from '@/lib/social-api.mjs';
+import { isTelegramAdmin } from '@/lib/server/telegram-admin';
 
 type Input = Record<string, unknown>;
 type Ticket = { tokenHash: string; channelId: number; creatorId: number; telegramUserId: string; expiresAt: string; consumed: number; url: string; platformName: string; providerChannelId: string | null };
@@ -64,7 +65,7 @@ export async function connectTicket(token: string, consumed = 0): Promise<Ticket
 }
 export async function connectTicketHash(tokenHash: string, consumed = 0): Promise<Ticket> {
   const row = await db().prepare(`SELECT t.token_hash AS tokenHash, t.channel_id AS channelId, t.creator_id AS creatorId,
-    t.telegram_user_id AS telegramUserId, t.expires_at AS expiresAt, t.consumed, ch.url,
+    t.telegram_user_id AS telegramUserId, a.role AS telegramRole, t.expires_at AS expiresAt, t.consumed, ch.url,
     ch.provider_channel_id AS providerChannelId, pf.name AS platformName
     FROM social_connect_tickets t JOIN creator_channels ch ON ch.id = t.channel_id AND ch.creator_id = t.creator_id
     JOIN creators c ON c.id = ch.creator_id JOIN producers p ON p.id = c.producer_id
@@ -72,9 +73,9 @@ export async function connectTicketHash(tokenHash: string, consumed = 0): Promis
     JOIN telegram_creator_links l ON l.creator_id = c.id AND l.telegram_user_id = t.telegram_user_id
     JOIN telegram_accounts a ON a.telegram_user_id = t.telegram_user_id
     WHERE t.token_hash = ? AND t.consumed = ? AND t.expires_at > ? AND ch.deleted_at IS NULL
-      AND c.status = 'active' AND p.status = 'active' AND pf.status = 'active' AND a.role = 'creator' AND l.type_confirmed_at IS NOT NULL`)
-    .bind(tokenHash, consumed, new Date().toISOString()).first<Ticket>();
-  if (!row) throw new TelegramStorageError('Ссылка истекла или уже использована. Получите новую через /channels в боте.', 410);
+      AND c.status = 'active' AND p.status = 'active' AND pf.status = 'active' AND l.type_confirmed_at IS NOT NULL`)
+    .bind(tokenHash, consumed, new Date().toISOString()).first<Ticket & { telegramRole: string | null }>();
+  if (!row || (row.telegramRole !== 'creator' && !isTelegramAdmin(row.telegramUserId))) throw new TelegramStorageError('Ссылка истекла или уже использована. Получите новую через /channels в боте.', 410);
   return row;
 }
 export async function saveConnectTicket(token: string, input: Input) {
@@ -89,7 +90,7 @@ export async function saveConnectTicket(token: string, input: Input) {
   const claim = await db().prepare('UPDATE social_connect_tickets SET consumed = 1 WHERE token_hash = ? AND consumed = 0').bind(ticket.tokenHash).run();
   if (claim.meta.changes !== 1) throw new TelegramStorageError('Ссылка уже использована', 410);
   const identity = await inspectAccess(ticket, credentials);
-  if (!identity.accountId) throw new SocialApiError('API не подтвердил владельца.');
+  if (!identity?.accountId) throw new SocialApiError('API не подтвердил владельца.');
   let expiresAt: string | null = null;
   let refreshedAt: string | null = null;
   try {
@@ -120,12 +121,12 @@ export async function persistConnectedTicket(tokenHash: string, credentials: Ret
       JOIN telegram_accounts a ON a.telegram_user_id=t.telegram_user_id
       JOIN telegram_creator_links l ON l.telegram_user_id=a.telegram_user_id AND l.creator_id=c.id
       WHERE t.token_hash=? AND t.consumed=1 AND t.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND ch.deleted_at IS NULL
-        AND c.status='active' AND p.status='active' AND pf.status='active' AND a.role='creator' AND l.type_confirmed_at IS NOT NULL
+        AND c.status='active' AND p.status='active' AND pf.status='active' AND (a.role='creator' OR ?=1) AND l.type_confirmed_at IS NOT NULL
         AND (? IS NULL OR EXISTS(SELECT 1 FROM social_oauth_sessions os WHERE os.state_hash=? AND os.ticket_hash=t.token_hash
           AND os.status='exchanging' AND os.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')))
       ON CONFLICT(channel_id) DO UPDATE SET creator_id=excluded.creator_id,telegram_user_id=excluded.telegram_user_id,
       account_id=excluded.account_id,username=excluded.username,ciphertext=excluded.ciphertext,status='connected',expires_at=excluded.expires_at,refreshed_at=excluded.refreshed_at,updated_at=excluded.updated_at`)
-      .bind(identity.accountId, identity.username || identity.accountId, cipher, expiresAt, refreshedAt, now, ticket.tokenHash, oauthStateHash || null, oauthStateHash || null),
+      .bind(identity.accountId, identity.username || identity.accountId, cipher, expiresAt, refreshedAt, now, ticket.tokenHash, Number(isTelegramAdmin(ticket.telegramUserId)), oauthStateHash || null, oauthStateHash || null),
     db().prepare(`UPDATE creator_channels SET sync_status='pending',sync_error=NULL,next_sync_at=?,lease_token=NULL,lease_until=NULL,updated_at=?
       WHERE id=? AND deleted_at IS NULL AND EXISTS(SELECT 1 FROM social_connections WHERE channel_id=? AND updated_at=?)`)
       .bind(now, now, ticket.channelId, ticket.channelId, now),
