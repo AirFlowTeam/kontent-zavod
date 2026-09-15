@@ -116,7 +116,7 @@ async function processChannel(channel) {
     metrics = null;
     connection = (await syncRequest({ action: 'connection', channelId: channel.id, leaseToken: channel.leaseToken })).connection;
     if (connection) {
-      const options = { signal: requestSignal(commandTimeoutMs), tiktokClientKey: process.env.TIKTOK_CLIENT_KEY, tiktokClientSecret: process.env.TIKTOK_CLIENT_SECRET, expectedAccountId: connection.accountId };
+      const options = { signal: requestSignal(commandTimeoutMs), tiktokClientKey: process.env.TIKTOK_CLIENT_KEY, tiktokClientSecret: process.env.TIKTOK_CLIENT_SECRET, vkClientId: process.env.VK_CLIENT_ID, vkServiceToken: process.env.VK_SERVICE_TOKEN, expectedAccountId: connection.accountId };
       const shouldRefresh = ['TikTok', 'VK'].includes(channel.platformName) || (channel.platformName === 'Instagram' && Date.now() - Date.parse(connection.refreshedAt || connection.version) >= 24 * 60 * 60_000);
       if (shouldRefresh) {
         const updated = await refreshAccess(channel.platformName, connection.credentials, options);

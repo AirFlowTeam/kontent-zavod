@@ -78,7 +78,8 @@ test('public form enforces origin, no cache, masked fields and no secret echo', 
   assert.match(await get.text(), /type="password"/);
   const post = (origin) => route.POST(new Request('https://fixture.example/connect/' + ticketToken, { method: 'POST', headers: { origin, 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ accessToken: token }) }), context);
   assert.equal((await post('https://evil.example')).status, 403);
-  const success = await post('https://fixture.example'); assert.equal(success.status, 200);
+  const success = await post('https://fixture.example'); assert.equal(success.status, 303);
+  assert.equal(success.headers.get('location'), '/connect/success');
   assert.ok(!(await success.text()).includes(token));
   assert.equal((await post('https://fixture.example')).status, 410);
 });

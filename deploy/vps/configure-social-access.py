@@ -25,6 +25,9 @@ if marker not in nginx and nginx.count('    location = /healthz {') != 1:
 suffix = '.before-social-' + secrets.token_hex(4)
 shutil.copy2(config, str(config) + suffix)
 shutil.copy2(environment, str(environment) + suffix)
+had_fragment = fragment.is_file()
+if had_fragment:
+    shutil.copy2(fragment, str(fragment) + suffix)
 try:
     shutil.copyfile(source, fragment)
     fragment.chmod(0o640)
@@ -33,6 +36,8 @@ try:
     subprocess.run(['nginx', '-t'], check=True)
 except Exception:
     shutil.copy2(str(config) + suffix, config)
+    if had_fragment:
+        shutil.copy2(str(fragment) + suffix, fragment)
     raise
 lines = environment.read_text().splitlines()
 keys = {line.split('=', 1)[0] for line in lines if '=' in line and not line.startswith('#')}

@@ -1,0 +1,1824 @@
+{
+  "version": "6",
+  "dialect": "sqlite",
+  "id": "ebebb341-4c32-4943-a966-e39465dc4f44",
+  "prevId": "bb5c8479-a6a0-498a-bf02-ebd1f531fde4",
+  "tables": {
+    "app_meta": {
+      "name": "app_meta",
+      "columns": {
+        "key": {
+          "name": "key",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "value": {
+          "name": "value",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "channel_sync_history": {
+      "name": "channel_sync_history",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "channel_id": {
+          "name": "channel_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "observed_at": {
+          "name": "observed_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "recorded_at": {
+          "name": "recorded_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "source": {
+          "name": "source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "error_message": {
+          "name": "error_message",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "provider_channel_id": {
+          "name": "provider_channel_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "handle": {
+          "name": "handle",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "avatar_url": {
+          "name": "avatar_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "followers": {
+          "name": "followers",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "total_views": {
+          "name": "total_views",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "total_likes": {
+          "name": "total_likes",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "publication_count": {
+          "name": "publication_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "reach_30d": {
+          "name": "reach_30d",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "creator_type_snapshot": {
+          "name": "creator_type_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "producer_id_snapshot": {
+          "name": "producer_id_snapshot",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_channel_sync_history_observation": {
+          "name": "idx_channel_sync_history_observation",
+          "columns": [
+            "channel_id",
+            "observed_at"
+          ],
+          "isUnique": true
+        },
+        "idx_channel_sync_history_channel_recorded": {
+          "name": "idx_channel_sync_history_channel_recorded",
+          "columns": [
+            "channel_id",
+            "recorded_at"
+          ],
+          "isUnique": false
+        },
+        "idx_channel_sync_history_status_recorded": {
+          "name": "idx_channel_sync_history_status_recorded",
+          "columns": [
+            "status",
+            "recorded_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "channel_sync_history_channel_id_creator_channels_id_fk": {
+          "name": "channel_sync_history_channel_id_creator_channels_id_fk",
+          "tableFrom": "channel_sync_history",
+          "tableTo": "creator_channels",
+          "columnsFrom": [
+            "channel_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "chk_channel_sync_history_status": {
+          "name": "chk_channel_sync_history_status",
+          "value": "\"channel_sync_history\".\"status\" IN ('success', 'error', 'needs_auth')"
+        },
+        "chk_channel_sync_history_followers": {
+          "name": "chk_channel_sync_history_followers",
+          "value": "\"channel_sync_history\".\"followers\" IS NULL OR \"channel_sync_history\".\"followers\" >= 0"
+        },
+        "chk_channel_sync_history_total_views": {
+          "name": "chk_channel_sync_history_total_views",
+          "value": "\"channel_sync_history\".\"total_views\" IS NULL OR \"channel_sync_history\".\"total_views\" >= 0"
+        },
+        "chk_channel_sync_history_publication_count": {
+          "name": "chk_channel_sync_history_publication_count",
+          "value": "\"channel_sync_history\".\"publication_count\" IS NULL OR \"channel_sync_history\".\"publication_count\" >= 0"
+        },
+        "chk_channel_sync_history_reach_30d": {
+          "name": "chk_channel_sync_history_reach_30d",
+          "value": "\"channel_sync_history\".\"reach_30d\" IS NULL OR \"channel_sync_history\".\"reach_30d\" >= 0"
+        }
+      }
+    },
+    "creator_channels": {
+      "name": "creator_channels",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "creator_id": {
+          "name": "creator_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "platform_id": {
+          "name": "platform_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "url": {
+          "name": "url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "normalized_url": {
+          "name": "normalized_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "provider_channel_id": {
+          "name": "provider_channel_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "handle": {
+          "name": "handle",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "avatar_url": {
+          "name": "avatar_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "followers": {
+          "name": "followers",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "total_views": {
+          "name": "total_views",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "total_likes": {
+          "name": "total_likes",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "publication_count": {
+          "name": "publication_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "reach_30d": {
+          "name": "reach_30d",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "followers_override": {
+          "name": "followers_override",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "total_views_override": {
+          "name": "total_views_override",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "total_likes_override": {
+          "name": "total_likes_override",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "publication_count_override": {
+          "name": "publication_count_override",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "reach_30d_override": {
+          "name": "reach_30d_override",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'active'"
+        },
+        "sync_status": {
+          "name": "sync_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'pending'"
+        },
+        "sync_error": {
+          "name": "sync_error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "sync_source": {
+          "name": "sync_source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "last_synced_at": {
+          "name": "last_synced_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "metrics_updated_at": {
+          "name": "metrics_updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "next_sync_at": {
+          "name": "next_sync_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "lease_until": {
+          "name": "lease_until",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "lease_token": {
+          "name": "lease_token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "consecutive_failures": {
+          "name": "consecutive_failures",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_creator_channels_normalized_url": {
+          "name": "idx_creator_channels_normalized_url",
+          "columns": [
+            "normalized_url"
+          ],
+          "isUnique": true
+        },
+        "idx_creator_channels_provider_id": {
+          "name": "idx_creator_channels_provider_id",
+          "columns": [
+            "platform_id",
+            "provider_channel_id"
+          ],
+          "isUnique": true
+        },
+        "idx_creator_channels_creator_id": {
+          "name": "idx_creator_channels_creator_id",
+          "columns": [
+            "creator_id"
+          ],
+          "isUnique": false
+        },
+        "idx_creator_channels_platform_id": {
+          "name": "idx_creator_channels_platform_id",
+          "columns": [
+            "platform_id"
+          ],
+          "isUnique": false
+        },
+        "idx_creator_channels_due": {
+          "name": "idx_creator_channels_due",
+          "columns": [
+            "status",
+            "next_sync_at",
+            "lease_until"
+          ],
+          "isUnique": false
+        },
+        "idx_creator_channels_lease_token": {
+          "name": "idx_creator_channels_lease_token",
+          "columns": [
+            "lease_token"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "creator_channels_creator_id_creators_id_fk": {
+          "name": "creator_channels_creator_id_creators_id_fk",
+          "tableFrom": "creator_channels",
+          "tableTo": "creators",
+          "columnsFrom": [
+            "creator_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "creator_channels_platform_id_platforms_id_fk": {
+          "name": "creator_channels_platform_id_platforms_id_fk",
+          "tableFrom": "creator_channels",
+          "tableTo": "platforms",
+          "columnsFrom": [
+            "platform_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "chk_creator_channels_status": {
+          "name": "chk_creator_channels_status",
+          "value": "\"creator_channels\".\"status\" IN ('active', 'inactive')"
+        },
+        "chk_creator_channels_sync_status": {
+          "name": "chk_creator_channels_sync_status",
+          "value": "\"creator_channels\".\"sync_status\" IN ('pending', 'success', 'error', 'needs_auth')"
+        },
+        "chk_creator_channels_followers": {
+          "name": "chk_creator_channels_followers",
+          "value": "\"creator_channels\".\"followers\" IS NULL OR \"creator_channels\".\"followers\" >= 0"
+        },
+        "chk_creator_channels_total_views": {
+          "name": "chk_creator_channels_total_views",
+          "value": "\"creator_channels\".\"total_views\" IS NULL OR \"creator_channels\".\"total_views\" >= 0"
+        },
+        "chk_creator_channels_publication_count": {
+          "name": "chk_creator_channels_publication_count",
+          "value": "\"creator_channels\".\"publication_count\" IS NULL OR \"creator_channels\".\"publication_count\" >= 0"
+        },
+        "chk_creator_channels_reach_30d": {
+          "name": "chk_creator_channels_reach_30d",
+          "value": "\"creator_channels\".\"reach_30d\" IS NULL OR \"creator_channels\".\"reach_30d\" >= 0"
+        },
+        "chk_creator_channels_followers_override": {
+          "name": "chk_creator_channels_followers_override",
+          "value": "\"creator_channels\".\"followers_override\" IS NULL OR \"creator_channels\".\"followers_override\" >= 0"
+        },
+        "chk_creator_channels_total_views_override": {
+          "name": "chk_creator_channels_total_views_override",
+          "value": "\"creator_channels\".\"total_views_override\" IS NULL OR \"creator_channels\".\"total_views_override\" >= 0"
+        },
+        "chk_creator_channels_publication_count_override": {
+          "name": "chk_creator_channels_publication_count_override",
+          "value": "\"creator_channels\".\"publication_count_override\" IS NULL OR \"creator_channels\".\"publication_count_override\" >= 0"
+        },
+        "chk_creator_channels_reach_30d_override": {
+          "name": "chk_creator_channels_reach_30d_override",
+          "value": "\"creator_channels\".\"reach_30d_override\" IS NULL OR \"creator_channels\".\"reach_30d_override\" >= 0"
+        },
+        "chk_creator_channels_failure_count": {
+          "name": "chk_creator_channels_failure_count",
+          "value": "\"creator_channels\".\"consecutive_failures\" >= 0"
+        }
+      }
+    },
+    "creators": {
+      "name": "creators",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "type": {
+          "name": "type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "producer_id": {
+          "name": "producer_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'active'"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_creators_name": {
+          "name": "idx_creators_name",
+          "columns": [
+            "name"
+          ],
+          "isUnique": true
+        },
+        "idx_creators_producer_id": {
+          "name": "idx_creators_producer_id",
+          "columns": [
+            "producer_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "creators_producer_id_producers_id_fk": {
+          "name": "creators_producer_id_producers_id_fk",
+          "tableFrom": "creators",
+          "tableTo": "producers",
+          "columnsFrom": [
+            "producer_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "platforms": {
+      "name": "platforms",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "domains": {
+          "name": "domains",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'active'"
+        }
+      },
+      "indexes": {
+        "idx_platforms_name": {
+          "name": "idx_platforms_name",
+          "columns": [
+            "name"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "producers": {
+      "name": "producers",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'active'"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_producers_name": {
+          "name": "idx_producers_name",
+          "columns": [
+            "name"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "reach_history": {
+      "name": "reach_history",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "video_id": {
+          "name": "video_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "reach": {
+          "name": "reach",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "recorded_at": {
+          "name": "recorded_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_reach_history_video_id": {
+          "name": "idx_reach_history_video_id",
+          "columns": [
+            "video_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "reach_history_video_id_videos_id_fk": {
+          "name": "reach_history_video_id_videos_id_fk",
+          "tableFrom": "reach_history",
+          "tableTo": "videos",
+          "columnsFrom": [
+            "video_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "social_connect_tickets": {
+      "name": "social_connect_tickets",
+      "columns": {
+        "token_hash": {
+          "name": "token_hash",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "channel_id": {
+          "name": "channel_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "creator_id": {
+          "name": "creator_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "telegram_user_id": {
+          "name": "telegram_user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "consumed": {
+          "name": "consumed",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        }
+      },
+      "indexes": {
+        "idx_social_tickets_channel": {
+          "name": "idx_social_tickets_channel",
+          "columns": [
+            "channel_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "social_connect_tickets_channel_id_creator_channels_id_fk": {
+          "name": "social_connect_tickets_channel_id_creator_channels_id_fk",
+          "tableFrom": "social_connect_tickets",
+          "tableTo": "creator_channels",
+          "columnsFrom": [
+            "channel_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "social_connect_tickets_creator_id_creators_id_fk": {
+          "name": "social_connect_tickets_creator_id_creators_id_fk",
+          "tableFrom": "social_connect_tickets",
+          "tableTo": "creators",
+          "columnsFrom": [
+            "creator_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "social_connections": {
+      "name": "social_connections",
+      "columns": {
+        "channel_id": {
+          "name": "channel_id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "creator_id": {
+          "name": "creator_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "telegram_user_id": {
+          "name": "telegram_user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "account_id": {
+          "name": "account_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "username": {
+          "name": "username",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "ciphertext": {
+          "name": "ciphertext",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "refreshed_at": {
+          "name": "refreshed_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_social_connections_creator": {
+          "name": "idx_social_connections_creator",
+          "columns": [
+            "creator_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "social_connections_channel_id_creator_channels_id_fk": {
+          "name": "social_connections_channel_id_creator_channels_id_fk",
+          "tableFrom": "social_connections",
+          "tableTo": "creator_channels",
+          "columnsFrom": [
+            "channel_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "social_connections_creator_id_creators_id_fk": {
+          "name": "social_connections_creator_id_creators_id_fk",
+          "tableFrom": "social_connections",
+          "tableTo": "creators",
+          "columnsFrom": [
+            "creator_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "social_oauth_sessions": {
+      "name": "social_oauth_sessions",
+      "columns": {
+        "state_hash": {
+          "name": "state_hash",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "ticket_hash": {
+          "name": "ticket_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "browser_hash": {
+          "name": "browser_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "provider": {
+          "name": "provider",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "ciphertext": {
+          "name": "ciphertext",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'pending'"
+        },
+        "message": {
+          "name": "message",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_social_oauth_ticket": {
+          "name": "idx_social_oauth_ticket",
+          "columns": [
+            "ticket_hash"
+          ],
+          "isUnique": true
+        },
+        "idx_social_oauth_expiry": {
+          "name": "idx_social_oauth_expiry",
+          "columns": [
+            "expires_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "social_oauth_sessions_ticket_hash_social_connect_tickets_token_hash_fk": {
+          "name": "social_oauth_sessions_ticket_hash_social_connect_tickets_token_hash_fk",
+          "tableFrom": "social_oauth_sessions",
+          "tableTo": "social_connect_tickets",
+          "columnsFrom": [
+            "ticket_hash"
+          ],
+          "columnsTo": [
+            "token_hash"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "telegram_accounts": {
+      "name": "telegram_accounts",
+      "columns": {
+        "telegram_user_id": {
+          "name": "telegram_user_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "chat_id": {
+          "name": "chat_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "username": {
+          "name": "username",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "display_name": {
+          "name": "display_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "role": {
+          "name": "role",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "selected_type": {
+          "name": "selected_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "pending_invite_hash": {
+          "name": "pending_invite_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "chk_telegram_accounts_role": {
+          "name": "chk_telegram_accounts_role",
+          "value": "\"telegram_accounts\".\"role\" IS NULL OR \"telegram_accounts\".\"role\" IN ('producer', 'creator')"
+        },
+        "chk_telegram_accounts_type": {
+          "name": "chk_telegram_accounts_type",
+          "value": "\"telegram_accounts\".\"selected_type\" IS NULL OR \"telegram_accounts\".\"selected_type\" IN ('UGC', 'AI')"
+        }
+      }
+    },
+    "telegram_creator_links": {
+      "name": "telegram_creator_links",
+      "columns": {
+        "telegram_user_id": {
+          "name": "telegram_user_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "creator_id": {
+          "name": "creator_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "chat_id": {
+          "name": "chat_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "username": {
+          "name": "username",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "display_name": {
+          "name": "display_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "type_confirmed_at": {
+          "name": "type_confirmed_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_telegram_creator_links_creator_id": {
+          "name": "idx_telegram_creator_links_creator_id",
+          "columns": [
+            "creator_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "telegram_creator_links_creator_id_creators_id_fk": {
+          "name": "telegram_creator_links_creator_id_creators_id_fk",
+          "tableFrom": "telegram_creator_links",
+          "tableTo": "creators",
+          "columnsFrom": [
+            "creator_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "telegram_invites": {
+      "name": "telegram_invites",
+      "columns": {
+        "token_hash": {
+          "name": "token_hash",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "producer_id": {
+          "name": "producer_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "creator_id": {
+          "name": "creator_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "update_id": {
+          "name": "update_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "redeemed_by": {
+          "name": "redeemed_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "redeemed_at": {
+          "name": "redeemed_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_telegram_invites_update": {
+          "name": "idx_telegram_invites_update",
+          "columns": [
+            "created_by",
+            "update_id"
+          ],
+          "isUnique": true
+        },
+        "idx_telegram_invites_producer": {
+          "name": "idx_telegram_invites_producer",
+          "columns": [
+            "producer_id",
+            "created_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "telegram_invites_producer_id_producers_id_fk": {
+          "name": "telegram_invites_producer_id_producers_id_fk",
+          "tableFrom": "telegram_invites",
+          "tableTo": "producers",
+          "columnsFrom": [
+            "producer_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "telegram_invites_creator_id_creators_id_fk": {
+          "name": "telegram_invites_creator_id_creators_id_fk",
+          "tableFrom": "telegram_invites",
+          "tableTo": "creators",
+          "columnsFrom": [
+            "creator_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "telegram_invites_created_by_telegram_accounts_telegram_user_id_fk": {
+          "name": "telegram_invites_created_by_telegram_accounts_telegram_user_id_fk",
+          "tableFrom": "telegram_invites",
+          "tableTo": "telegram_accounts",
+          "columnsFrom": [
+            "created_by"
+          ],
+          "columnsTo": [
+            "telegram_user_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "telegram_producer_links": {
+      "name": "telegram_producer_links",
+      "columns": {
+        "telegram_user_id": {
+          "name": "telegram_user_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "producer_id": {
+          "name": "producer_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_telegram_producer_links_producer": {
+          "name": "idx_telegram_producer_links_producer",
+          "columns": [
+            "producer_id"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "telegram_producer_links_telegram_user_id_telegram_accounts_telegram_user_id_fk": {
+          "name": "telegram_producer_links_telegram_user_id_telegram_accounts_telegram_user_id_fk",
+          "tableFrom": "telegram_producer_links",
+          "tableTo": "telegram_accounts",
+          "columnsFrom": [
+            "telegram_user_id"
+          ],
+          "columnsTo": [
+            "telegram_user_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "telegram_producer_links_producer_id_producers_id_fk": {
+          "name": "telegram_producer_links_producer_id_producers_id_fk",
+          "tableFrom": "telegram_producer_links",
+          "tableTo": "producers",
+          "columnsFrom": [
+            "producer_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "telegram_submissions": {
+      "name": "telegram_submissions",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "update_id": {
+          "name": "update_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "telegram_user_id": {
+          "name": "telegram_user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "creator_id": {
+          "name": "creator_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "channel_id": {
+          "name": "channel_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "source_kind": {
+          "name": "source_kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "result_status": {
+          "name": "result_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_telegram_submissions_update_id": {
+          "name": "idx_telegram_submissions_update_id",
+          "columns": [
+            "update_id"
+          ],
+          "isUnique": true
+        },
+        "idx_telegram_submissions_user_created": {
+          "name": "idx_telegram_submissions_user_created",
+          "columns": [
+            "telegram_user_id",
+            "created_at"
+          ],
+          "isUnique": false
+        },
+        "idx_telegram_submissions_channel_id": {
+          "name": "idx_telegram_submissions_channel_id",
+          "columns": [
+            "channel_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "telegram_submissions_telegram_user_id_telegram_creator_links_telegram_user_id_fk": {
+          "name": "telegram_submissions_telegram_user_id_telegram_creator_links_telegram_user_id_fk",
+          "tableFrom": "telegram_submissions",
+          "tableTo": "telegram_creator_links",
+          "columnsFrom": [
+            "telegram_user_id"
+          ],
+          "columnsTo": [
+            "telegram_user_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "telegram_submissions_creator_id_creators_id_fk": {
+          "name": "telegram_submissions_creator_id_creators_id_fk",
+          "tableFrom": "telegram_submissions",
+          "tableTo": "creators",
+          "columnsFrom": [
+            "creator_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "telegram_submissions_channel_id_creator_channels_id_fk": {
+          "name": "telegram_submissions_channel_id_creator_channels_id_fk",
+          "tableFrom": "telegram_submissions",
+          "tableTo": "creator_channels",
+          "columnsFrom": [
+            "channel_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "chk_telegram_submissions_source_kind": {
+          "name": "chk_telegram_submissions_source_kind",
+          "value": "\"telegram_submissions\".\"source_kind\" IN ('channel', 'video')"
+        },
+        "chk_telegram_submissions_result_status": {
+          "name": "chk_telegram_submissions_result_status",
+          "value": "\"telegram_submissions\".\"result_status\" IN ('created', 'existing')"
+        }
+      }
+    },
+    "video_url_aliases": {
+      "name": "video_url_aliases",
+      "columns": {
+        "canonical_url": {
+          "name": "canonical_url",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "video_id": {
+          "name": "video_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_video_url_aliases_video_id": {
+          "name": "idx_video_url_aliases_video_id",
+          "columns": [
+            "video_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "video_url_aliases_video_id_videos_id_fk": {
+          "name": "video_url_aliases_video_id_videos_id_fk",
+          "tableFrom": "video_url_aliases",
+          "tableTo": "videos",
+          "columnsFrom": [
+            "video_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "videos": {
+      "name": "videos",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "creator_id": {
+          "name": "creator_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "platform_id": {
+          "name": "platform_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "url": {
+          "name": "url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "normalized_url": {
+          "name": "normalized_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "published_at": {
+          "name": "published_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "added_at": {
+          "name": "added_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "reach": {
+          "name": "reach",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'active'"
+        },
+        "creator_type_snapshot": {
+          "name": "creator_type_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "producer_id_snapshot": {
+          "name": "producer_id_snapshot",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_videos_normalized_url": {
+          "name": "idx_videos_normalized_url",
+          "columns": [
+            "normalized_url"
+          ],
+          "isUnique": true
+        },
+        "idx_videos_creator_id": {
+          "name": "idx_videos_creator_id",
+          "columns": [
+            "creator_id"
+          ],
+          "isUnique": false
+        },
+        "idx_videos_platform_id": {
+          "name": "idx_videos_platform_id",
+          "columns": [
+            "platform_id"
+          ],
+          "isUnique": false
+        },
+        "idx_videos_status_published_at": {
+          "name": "idx_videos_status_published_at",
+          "columns": [
+            "status",
+            "published_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "videos_creator_id_creators_id_fk": {
+          "name": "videos_creator_id_creators_id_fk",
+          "tableFrom": "videos",
+          "tableTo": "creators",
+          "columnsFrom": [
+            "creator_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "videos_platform_id_platforms_id_fk": {
+          "name": "videos_platform_id_platforms_id_fk",
+          "tableFrom": "videos",
+          "tableTo": "platforms",
+          "columnsFrom": [
+            "platform_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    }
+  },
+  "views": {},
+  "enums": {},
+  "_meta": {
+    "schemas": {},
+    "tables": {},
+    "columns": {}
+  },
+  "internal": {
+    "indexes": {}
+  }
+}

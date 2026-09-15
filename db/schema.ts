@@ -295,3 +295,14 @@ export const socialConnectTickets = sqliteTable('social_connect_tickets', {
   expiresAt: text('expires_at').notNull(),
   consumed: integer('consumed').notNull().default(0),
 }, (table) => [index('idx_social_tickets_channel').on(table.channelId)]);
+
+export const socialOauthSessions = sqliteTable('social_oauth_sessions', {
+  stateHash: text('state_hash').primaryKey(),
+  ticketHash: text('ticket_hash').notNull().references(() => socialConnectTickets.tokenHash, { onDelete: 'cascade' }),
+  browserHash: text('browser_hash').notNull(),
+  provider: text('provider').notNull(),
+  ciphertext: text('ciphertext').notNull(),
+  status: text('status').notNull().default('pending'),
+  message: text('message'),
+  expiresAt: text('expires_at').notNull(),
+}, (table) => [uniqueIndex('idx_social_oauth_ticket').on(table.ticketHash), index('idx_social_oauth_expiry').on(table.expiresAt)]);

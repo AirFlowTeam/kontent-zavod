@@ -185,7 +185,7 @@ export function createTelegramBotFlow({ backend, send: deliver, answerCallback, 
       const id = Number(social[2]);
       if (social[1] === 'connect') {
         const result = await backend('connectSocial', { ...actor, id });
-        return send(message.chat.id, `Подключение ${result.connection.platformName}.\n\nОткройте персональную форму — там инструкция и поля доступа. Ссылка одноразовая, действует 10 минут. Не пересылайте её. Пароли и токены в сообщения боту не отправляйте.`, keyboard([[{ text: 'Открыть защищённую форму', url: result.connection.url }], [{ text: 'Мои каналы', callback_data: 'menu:channels' }]]));
+        return send(message.chat.id, `Подключение ${result.connection.platformName}.\n\nОткройте персональную форму и нажмите «Войти через соцсеть». Если администратор ещё не включил вход, форма подскажет, что сделать. YouTube можно подключить общим или личным ключом.\n\nСсылка одноразовая, на 10 минут. Эта новая ссылка заменяет предыдущую для канала. Завершите вход в том же браузере. Не пересылайте ссылку; пароли и токены в сообщения не отправляйте.`, keyboard([[{ text: 'Открыть защищённую форму', url: result.connection.url }], [{ text: 'Мои каналы', callback_data: 'menu:channels' }]]));
       }
       if (social[1] === 'confirm-disconnect') {
         if (!confirmation || confirmation.action !== 'disconnect' || confirmation.id !== id || confirmation.nonce !== social[3] || confirmation.expiresAt < Date.now()) return send(message.chat.id, 'Это старое подтверждение. Доступ не изменён. Откройте /channels.');
