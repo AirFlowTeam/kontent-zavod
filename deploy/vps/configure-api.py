@@ -17,7 +17,7 @@ fields = {
     'threads': ['THREADS_CLIENT_ID', 'THREADS_CLIENT_SECRET'],
     'tiktok': ['TIKTOK_CLIENT_KEY', 'TIKTOK_CLIENT_SECRET'],
     'vk': ['VK_CLIENT_ID', 'VK_SERVICE_TOKEN'],
-    'youtube': ['YOUTUBE_API_KEY'],
+    'youtube': ['YOUTUBE_CLIENT_ID', 'YOUTUBE_CLIENT_SECRET'],
 }
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('provider', choices=fields)
@@ -40,13 +40,14 @@ for key in fields[args.provider]:
         continue
     if len(value) > 8192 or not re.fullmatch(r'[A-Za-z0-9._~+/=:\-]+', value):
         raise SystemExit('Invalid characters; no changes saved')
-    if key.endswith('CLIENT_ID') and not value.isdigit():
+    if key == 'YOUTUBE_CLIENT_ID' and not re.fullmatch(r'[A-Za-z0-9-]+\.apps\.googleusercontent\.com', value):
+        raise SystemExit('Expected a Google OAuth client ID; no changes saved')
+    if key.endswith('CLIENT_ID') and key != 'YOUTUBE_CLIENT_ID' and not value.isdigit():
         raise SystemExit('Client ID must be numeric; no changes saved')
     updates[key] = value
-if args.provider != 'youtube':
-    print('Enable only for permitted test users or after platform approval. Setup alone does not grant video access.')
-    enabled = input('Enable official sign-in now? Type YES; anything else keeps it disabled: ').strip() == 'YES'
-    updates[args.provider.upper() + '_OAUTH_ENABLED'] = 'true' if enabled else 'false'
+print('Enable only for permitted test users or after platform approval. Setup alone does not grant video access.')
+enabled = input('Enable official sign-in now? Type YES; anything else keeps it disabled: ').strip() == 'YES'
+updates[args.provider.upper() + '_OAUTH_ENABLED'] = 'true' if enabled else 'false'
 if not updates:
     raise SystemExit('No changes')
 lines = [line for line in original.splitlines() if line.split('=', 1)[0] not in updates]

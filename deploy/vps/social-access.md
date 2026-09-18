@@ -50,8 +50,8 @@ the original vault key for recovery. Do not rotate the key without migration.
   after 24h. Count own root posts and per-post lifetime views/likes, never profile views.
   Reposts, replies and ghost posts excluded. App approval remains an operator prerequisite.
 - YouTube: Each creator attaches a personal Data API key restricted to API and VPS IP
-  to their own Content Factory channel. A legacy server-key fallback is preserved;
-  the normal bot path uses a creator's personal form. Key is a project
+  to their own Content Factory channel. Collection requires that connected personal
+  credential; the server key and anonymous fallbacks are not used. Key is a project
   credential, not proof of YouTube ownership. All public uploads queried for likes.
 - RuTube: No key required for public uploads/views. Public likes unavailable.
 

@@ -740,7 +740,7 @@ export default function ContentFactoryApp() {
             </div>
           )}
           {exportError && <Alert variant="destructive" className="mt-4"><AlertTitle>Выгрузка не создана</AlertTitle><AlertDescription>{exportError}</AlertDescription></Alert>}
-          {refreshError && !loading && <p role="status" className="my-3 text-sm text-amber-700">{refreshError}</p>}
+          {refreshError && !loading && <output className="my-3 block text-sm text-amber-700">{refreshError}</output>}
           <div className="mt-6">{content}</div>
         </section>
       </div>

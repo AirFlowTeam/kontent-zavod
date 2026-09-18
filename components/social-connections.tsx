@@ -20,7 +20,7 @@ export function SocialConnections({ channels }: { channels: Channel[] }) {
       <a className="inline-block mt-3 ml-5 text-primary underline" href={setup?.guideUrl || '/api-guide'} target="_blank" rel="noreferrer">Гайд для рассылки креаторам</a>
     </div>
     <section className="rounded-3xl border bg-card p-5"><h2 className="text-xl font-semibold">Готовность приложений</h2>
-      <a href="/api/integrations/guide" className="inline-block mt-2 text-primary underline text-sm">Скачать пошаговый гайд администратора</a>
+      <a href="/api/integrations/guide" download className="inline-block mt-2 text-primary underline text-sm">Скачать пошаговый гайд администратора</a>
       <p className="text-sm text-muted-foreground mt-2">Секреты вводятся только на сервере. Здесь показаны настройки, которые нужно заполнить администратору. Обычному креатору создавать приложение не нужно.</p>
       {setupError && <p role="alert" className="mt-3 text-sm text-amber-700">Не удалось обновить состояние настроек. Повторим автоматически.</p>}
       {!setup && !setupError && <p className="mt-3">Проверяем настройки…</p>}

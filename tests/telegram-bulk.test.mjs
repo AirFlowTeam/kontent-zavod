@@ -52,22 +52,23 @@ test('limit, duplicate URLs and legacy item index zero are explicit and bounded'
 
 test('guide has working steps, saved-state navigation and API options only for own creator channels', async (t) => {
   const { h, message, callback, sent } = await setup(t);
-  await callback('menu:add-channel'); assert.match(sent.at(-1).text, /Шаг 3 из 4/);
+  await callback('menu:add-channel'); assert.match(sent.at(-1).text, /Какая соцсеть/);
   assert.ok(sent.at(-1).extra.reply_markup.inline_keyboard.flat().some((b) => b.callback_data === 'guide:link:Threads:0'));
   await callback('guide:link:Threads:0'); assert.match(sent.at(-1).text, /Копировать ссылку/);
   await callback('guide:link:Threads:1'); assert.match(sent.at(-1).text, /Вставьте ссылку/);
   await message('https://threads.net/@alice');
-  await message('/api'); assert.match(sent.at(-1).text, /Шаг 4 из 4/);
-  assert.ok(sent.at(-1).extra.reply_markup.inline_keyboard.flat().some((b) => /^social:connect:/.test(b.callback_data)));
-  await callback('social:help:Threads'); assert.match(sent.at(-1).text, /Шаг 1 из/);
-  await callback('social:help:Threads:1'); assert.match(sent.at(-1).text, /Войти через Threads/);
-  await callback('connections:Threads', 1001); assert.match(sent.at(-1).text, /сами креаторы/);
-  assert.ok(!sent.at(-1).extra.reply_markup.inline_keyboard.flat().some((b) => /^social:connect:/.test(b.callback_data)));
-  await message('/channels'); assert.ok(sent.some((s) => /Посты: недоступно/.test(s.text)));
+  await message('/api'); assert.match(sent.at(-1).text, /нужно подключить аккаунт/);
+  assert.ok(sent.at(-1).extra.reply_markup.inline_keyboard.flat().some((b) => b.callback_data?.startsWith('social:connect:')));
+  await callback('social:help:Threads'); assert.match(sent.at(-1).text, /шаг 1 из/);
+  await callback('social:help:Threads:1'); assert.match(sent.at(-1).text, /администратор/);
+  await callback('social:help:Threads:2'); assert.match(sent.at(-1).text, /Войти через Threads/);
+  await callback('connections:Threads', 1001); assert.match(sent.at(-1).text, /контент/);
+  assert.ok(!sent.at(-1).extra.reply_markup.inline_keyboard.flat().some((b) => b.callback_data?.startsWith('social:connect:')));
+  await message('/channels'); assert.ok(sent.some((s) => /Посты: не получено/.test(s.text)));
   assert.equal(h.sqlite.prepare('SELECT count(*) n FROM social_connect_tickets').get().n, 0);
 });
 
-test('simultaneous duplicate receipt cannot enrich two channels; role change at final batch prevents creation', async (t) => {
+test('simultaneous duplicate receipt cannot enrich two channels; capability removal at final batch prevents creation', async (t) => {
   const { h } = await setup(t); const submit = h.load('db/telegram.ts').submitTelegramChannel;
   const base = { telegramUserId: '2001', sourceKind: 'channel' };
   await submit({ ...base, updateId: 1, channelUrl: 'https://youtube.com/@one' });
@@ -79,7 +80,7 @@ test('simultaneous duplicate receipt cannot enrich two channels; role change at 
   assert.equal(results[0].id, results[1].id);
   assert.equal(h.sqlite.prepare('SELECT count(*) n FROM creator_channels WHERE provider_channel_id IS NOT NULL').get().n, 1);
   const batch = h.DB.batch.bind(h.DB);
-  h.DB.batch = async (items) => { h.sqlite.prepare("UPDATE telegram_accounts SET role='producer' WHERE telegram_user_id='2001'").run(); return batch(items); };
+  h.DB.batch = async (items) => { h.sqlite.prepare("UPDATE telegram_creator_links SET type_confirmed_at=NULL WHERE telegram_user_id='2001'").run(); return batch(items); };
   await assert.rejects(submit({ ...base, updateId: 4, channelUrl: 'https://youtube.com/@new' }), /изменены/);
   assert.equal(h.sqlite.prepare('SELECT count(*) n FROM creator_channels').get().n, 2);
   assert.equal(h.sqlite.prepare('SELECT count(*) n FROM telegram_submissions WHERE update_id=4').get().n, 0);

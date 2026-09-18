@@ -37,3 +37,20 @@ next-env.d.ts
 /outputs/
 /work/
 *.tsbuildinfo
+
+# Local service credentials and OAuth client downloads
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+sync.env
+telegram.env
+*.env.before-*
+client_secret*.json
+
+# Local application databases and their journals
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+*.db-wal
+*.db-shm

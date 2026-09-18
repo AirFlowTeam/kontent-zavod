@@ -53,6 +53,7 @@ export async function finishOAuth(provider: string, params: Record<string, strin
     const saved = await decrypt({ ...ticket, accountId: `oauth:${row.stateHash}`, ciphertext: row.ciphertext });
     const result = await exchangeCode(provider, env, params, saved.verifier);
     const identity = await inspectAccess(ticket, result.credentials);
+    if (!identity?.accountId) throw new SocialApiError('Площадка не подтвердила владельца доступа. Подключите аккаунт заново.');
     // Instagram code exchange returns the app-scoped ID (/me.id), while metrics
     // and the vault are keyed by the professional IG ID (/me.user_id).
     const exchangedIdentity = provider === 'instagram' ? String(('profile' in identity && identity.profile?.id) || '') : identity.accountId;
@@ -69,5 +70,8 @@ export async function finishOAuth(provider: string, params: Record<string, strin
 }
 export async function oauthResult(state: string, secret: string) {
   const row = await session(state, secret);
-  return { status: row.status, message: row.message || 'Подключение ещё обрабатывается. Проверьте состояние канала в боте.' };
+  const target = await env.DB.prepare(`SELECT ch.id AS channelId FROM social_connect_tickets t
+    JOIN creator_channels ch ON ch.id=t.channel_id AND ch.creator_id=t.creator_id
+    WHERE t.token_hash=? AND ch.deleted_at IS NULL`).bind(row.ticketHash).first<{ channelId: number }>();
+  return { status: row.status, channelId: target?.channelId, message: row.message || 'Подключение ещё обрабатывается. Проверьте состояние канала в боте.' };
 }

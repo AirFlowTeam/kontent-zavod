@@ -3,6 +3,8 @@
 import { createTelegramBotFlow, homeMenu } from './telegram-bot-flow.mjs';
 import { runYtDlp } from './yt-dlp-runner.mjs';
 import { createTelegramUpdateQueue, limitConcurrency } from './telegram-update-queue.mjs';
+import { socialGuideForm } from '../lib/social-guide-files.mjs';
+import { channelSubmissionReceipt } from './telegram-channel-receipt.mjs';
 
 import {
   channelDescriptorsFromInfo,
@@ -33,7 +35,7 @@ const stopController = new AbortController();
 const resolveVideo = limitConcurrency(2, { signal: stopController.signal });
 let stopping = false;
 let botUsername = '';
-const flow = createTelegramBotFlow({ backend: backendRequest, send: sendMessage,
+const flow = createTelegramBotFlow({ backend: backendRequest, send: sendMessage, sendGuide,
   answerCallback, processLink, botUsername: () => botUsername });
 
 class ServiceError extends Error {
@@ -56,8 +58,10 @@ async function telegramRequest(method, payload = {}, timeoutMs = 20_000) {
     try {
       response = await fetch(`${botApiBase}/${method}`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(payload),
+        ...(payload instanceof FormData ? { body: payload } : {
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(payload),
+        }),
         signal: combinedSignal(timeoutMs),
       });
     } catch (error) {
@@ -74,7 +78,7 @@ async function telegramRequest(method, payload = {}, timeoutMs = 20_000) {
     const description = typeof result?.description === 'string' ? result.description : '';
     if (method === 'editMessageText' && /message is not modified/i.test(description)) return true;
     const status = !response.ok ? response.status : result?.error_code || 502;
-    if (method === 'sendMessage' && [400, 403].includes(status)
+    if (['sendMessage', 'sendDocument'].includes(method) && [400, 403].includes(status)
         && /bot was blocked|user is deactivated|chat not found|bot can't initiate|bot was kicked/i.test(description)) {
       const error = new ServiceError('Получатель недоступен', status);
       error.telegramDeliveryPermanent = true;
@@ -143,9 +147,12 @@ async function sendMessage(chatId, text, extra = {}) {
     chat_id: chatId,
     text: clipped(text, 4_000),
     disable_web_page_preview: true,
-    ...homeMenu,
     ...extra,
   });
+}
+
+async function sendGuide(chatId, platform) {
+  return telegramRequest('sendDocument', socialGuideForm(chatId, platform), 30_000);
 }
 
 
@@ -194,25 +201,9 @@ async function processLink(chatId, user, updateId, url, itemIndex = 0) {
     throw new ServiceError('Не удалось определить автора по ролику. Пришлите ссылку на сам канал.', 422, 0, true);
   }
   const result = await submitDescriptors(userIdentity(user), updateId, inspected.sourceKind, descriptors, itemIndex);
-  const channel = result.channel;
-  const nextSteps = { reply_markup: { inline_keyboard: [
-    ...(channel.creatorMatch && channel.platformName !== 'RuTube' ? [[{ text: `Подключить мой ${channel.platformName}`, callback_data: `social:connect:${channel.id}` }], [{ text: 'Как получить доступ · пошагово', callback_data: `social:help:${channel.platformName}` }]] : []),
-    [{ text: '＋ Добавить ещё ссылки', callback_data: 'menu:add-channel' }],
-    [{ text: 'Мои каналы', callback_data: 'menu:channels' }],
-  ] } };
-  if (channel.status === 'deleted') return sendMessage(chatId, 'Этот канал был удалён. Повтор старого действия ничего не изменил. Чтобы добавить его снова, отправьте ссылку новым сообщением.');
-  if (channel.status === 'inactive') {
-    return sendMessage(chatId, channel.creatorMatch
-      ? `⚠️ Этот канал уже есть, но сбор приостановлен. Откройте «Мои каналы» → «Возобновить сбор».\n${channel.normalizedUrl}`
-      : `⚠️ Этот канал уже есть в платформе, но отключён. Ничего не менял.\n${channel.normalizedUrl}`);
-  }
-  if (channel.resultStatus === 'created') {
-    return sendMessage(chatId, `✅ Канал добавлен к «${channel.creatorName}»\n${channel.normalizedUrl}\n\n${channel.platformName === 'RuTube' ? 'Ключ не нужен: первая проверка уже в очереди.' : 'Шаг 4 — подключите личный доступ кнопкой ниже. Для этого канала ключи вводите только вы, не продюсер.'}\nПоказатели обновляются раз в сутки. Можно прислать следующий канал.`, nextSteps);
-  }
-  if (channel.creatorMatch) {
-    return sendMessage(chatId, `✅ Этот канал уже привязан к «${channel.creatorName}»\n${channel.normalizedUrl}\n\nПовторно добавлять его не нужно. Можно проверить доступ или добавить другие ссылки.`, nextSteps);
-  }
-  return sendMessage(chatId, `⚠️ Этот канал уже привязан к другому креатору. Ничего не менял.\n${channel.normalizedUrl}`);
+  const receipt = channelSubmissionReceipt(result.channel);
+  if (!result.channel.creatorMatch || result.channel.status === 'deleted') await sendMessage(chatId, receipt.text, receipt.extra);
+  return result;
 }
 
 
@@ -242,7 +233,7 @@ async function handleUpdate(update) {
       : 'Не удалось выполнить действие. Попробуйте ещё раз чуть позже или вернитесь в главное меню.';
     if (chatId) {
       try {
-        await sendMessage(chatId, `${userMessage}${known && error.status === 422 ? '\n\nМожно сразу прислать ссылку на канал.' : ''}`);
+        await sendMessage(chatId, `${userMessage}${known && error.status === 422 ? '\n\nМожно сразу прислать ссылку на канал.' : ''}`, homeMenu);
       } catch {
         // The polling loop stays alive even when the reply itself cannot be delivered.
       }
@@ -279,17 +270,10 @@ async function main() {
   botUsername = me.username;
   await telegramRequest('deleteWebhook', { drop_pending_updates: false });
   const commands = [
-      { command: 'start', description: 'Начать работу' },
-      { command: 'profile', description: 'Мой профиль и продюсер' },
-      { command: 'creators', description: 'Мои креаторы' },
-      { command: 'invite', description: 'Добавить креатора' },
-      { command: 'channels', description: 'Каналы и статистика' },
-      { command: 'role', description: 'Моя роль' },
-      { command: 'help', description: 'Как пользоваться ботом' },
-      { command: 'social', description: 'API и инструкции всех соцсетей' },
-      { command: 'guide', description: 'Пошагово: от приглашения до каналов' },
-      { command: 'api', description: 'Подключить мой доступ к соцсетям' },
-    ];
+    { command: 'start', description: 'Главное меню' },
+    { command: 'channels', description: 'Мои каналы и статистика' },
+    { command: 'help', description: 'Помощь с подключением' },
+  ];
   await telegramRequest('setMyCommands', { commands, scope: { type: 'all_private_chats' } });
   for (const adminId of adminUserIds) {
     await telegramRequest('setMyCommands', { commands: [{ command: 'admin', description: 'Все функции и команды платформы' }, ...commands], scope: { type: 'chat', chat_id: adminId } });

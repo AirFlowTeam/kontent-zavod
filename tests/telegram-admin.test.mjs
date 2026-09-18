@@ -95,7 +95,7 @@ test('admin bot menu, editing while producer, stale confirmation and revoked per
   const message = (text) => flow.handleMessage({ update_id: ++sequence, message: { from, chat, text } });
   const callback = (data) => flow.handleCallback({ update_id: ++sequence, callback_query: { id: String(sequence), from, message: { chat }, data } });
   const button = (prefix) => sent.at(-1).extra.reply_markup.inline_keyboard.flat().find((b) => b.callback_data?.startsWith(prefix)).callback_data;
-  await message('/start'); assert.match(sent.at(-1).text, /Администратор/);
+  await message('/admin'); assert.match(sent.at(-1).text, /Администратор/);
   await callback('admin:mode:producer');
   await callback(`admin:edit:${id}`); await message('https://youtube.com/@ui-after');
   assert.match(sent.at(-1).text, /Ссылка изменена/);

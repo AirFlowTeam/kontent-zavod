@@ -117,7 +117,7 @@ export async function getTelegramContext(input: Input) {
       status: pending.redeemedBy && pending.redeemedBy !== account.telegramUserId ? 'used'
         : pending.expiresAt <= new Date().toISOString() && !pending.redeemedBy ? 'expired'
           : pending.producerStatus !== 'active' ? 'inactive' : 'valid' } : null,
-    canSubmit: (role === 'creator' || dualRole) && Boolean(binding?.typeConfirmedAt && binding.producerTelegramId
+    canSubmit: (role === 'creator' || role === 'producer' || dualRole) && Boolean(binding?.typeConfirmedAt && binding.producerTelegramId
       && binding.creatorStatus === 'active' && binding.producerStatus === 'active') };
 }
 
@@ -193,8 +193,14 @@ export async function acceptTelegramInvite(input: Input) {
   if (linked && (linked.producerId !== invite.producerId || (invite.creatorId && invite.creatorId !== linked.id))) {
     throw new TelegramStorageError('Вы уже привязаны к другому креатору или продюсеру. Перенос выполняется администратором', 409);
   }
-  await db().prepare(`UPDATE telegram_accounts SET role = 'creator', pending_invite_hash = ?, updated_at = ? WHERE telegram_user_id = ?`)
-    .bind(hash, new Date().toISOString(), account.telegramUserId).run();
+  // A concurrent personal-profile setup must not let an old invite check
+  // replace the creator/team that was just bound to this Telegram identity.
+  const accepted = await db().prepare(`UPDATE telegram_accounts SET role = 'creator', pending_invite_hash = ?, updated_at = ?
+    WHERE telegram_user_id = ? AND NOT EXISTS (
+      SELECT 1 FROM telegram_creator_links l JOIN creators c ON c.id=l.creator_id
+      WHERE l.telegram_user_id=? AND (c.producer_id<>? OR (? IS NOT NULL AND c.id<>?)))`)
+    .bind(hash, new Date().toISOString(), account.telegramUserId, account.telegramUserId, invite.producerId, invite.creatorId, invite.creatorId).run();
+  if (accepted.meta.changes !== 1) throw new TelegramStorageError('Вы уже привязаны к другому креатору или продюсеру. Перенос выполняется администратором', 409);
   if (account.selectedType) return finishCreator({ ...account, pendingInviteHash: hash, role: 'creator' });
   return getTelegramContext(input);
 }
@@ -202,20 +208,59 @@ export async function acceptTelegramInvite(input: Input) {
 export async function selectTelegramCreatorType(input: Input) {
   const account = await accountFor(input);
   const linked = await creatorFor(account.telegramUserId);
-  if (account.role !== 'creator' && !(account.role === null && linked)) throw new TelegramStorageError('Сначала выберите роль креатора', 409);
-  if (!linked) {
-    if (!account.pendingInviteHash) throw new TelegramStorageError('Сначала откройте приглашение от продюсера', 409);
-    validInvite(await findInvite(account.pendingInviteHash), account.telegramUserId);
-  }
+  if (input.creatorId !== undefined || input.producerId !== undefined) throw new TelegramStorageError('Нельзя выбрать чужой профиль', 403);
+  if (!['creator', 'producer'].includes(account.role || '') && !(account.role === null && linked)) throw new TelegramStorageError('Сначала выберите роль', 409);
+  if (!linked && account.pendingInviteHash) validInvite(await findInvite(account.pendingInviteHash), account.telegramUserId);
   if (input.type !== 'AI' && input.type !== 'UGC') throw new TelegramStorageError('Выберите ИИ-контент или UGC', 400);
   if (account.selectedType && account.selectedType !== input.type) throw new TelegramStorageError('Тип уже выбран. Изменить его можно через администратора', 409);
   if (linked?.typeConfirmedAt && linked.type !== input.type) throw new TelegramStorageError('Тип этого креатора уже подтверждён. Обратитесь к администратору', 409);
-  await db().prepare(`UPDATE telegram_accounts SET role = 'creator', selected_type = ?, updated_at = ?
+  await db().prepare(`UPDATE telegram_accounts SET role = COALESCE(role, 'creator'), selected_type = ?, updated_at = ?
     WHERE telegram_user_id = ? AND (selected_type IS NULL OR selected_type = ?)`)
     .bind(input.type, new Date().toISOString(), account.telegramUserId, input.type).run();
   const selected = await accountFor({ telegramUserId: account.telegramUserId }, false);
   if (selected.selectedType !== input.type) throw new TelegramStorageError('Тип уже выбран. Изменить его можно через администратора', 409);
-  return finishCreator({ ...account, role: 'creator', selectedType: input.type });
+  return finishCreator(selected);
+}
+
+async function finishPersonalCreator(account: Account): Promise<Awaited<ReturnType<typeof getTelegramContext>>> {
+  const now = new Date().toISOString();
+  const producerName = `${(account.displayName || account.username || 'Продюсер').slice(0, 50)} · TG ${account.telegramUserId}`;
+  const creatorName = `${(account.displayName || account.username || 'Креатор').slice(0, 50)} · TG ${account.telegramUserId}`;
+  // The producer link is a private container for a standalone creator. Its
+  // presence never grants team/invitation permissions in creator mode.
+  // All four writes share one transaction; late invites and existing bindings
+  // win instead of being overwritten by an earlier type-selection request.
+  await db().batch([
+    db().prepare(`INSERT INTO producers(name,status,created_at)
+      SELECT ?, 'active', ? FROM telegram_accounts a
+      WHERE a.telegram_user_id=? AND a.role IN ('creator','producer') AND a.selected_type=?
+        AND a.pending_invite_hash IS NULL
+        AND NOT EXISTS(SELECT 1 FROM telegram_creator_links WHERE telegram_user_id=a.telegram_user_id)
+        AND NOT EXISTS(SELECT 1 FROM telegram_producer_links WHERE telegram_user_id=a.telegram_user_id)`)
+      .bind(producerName, now, account.telegramUserId, account.selectedType),
+    db().prepare(`INSERT INTO telegram_producer_links(telegram_user_id,producer_id,created_at)
+      SELECT ?,last_insert_rowid(),? WHERE changes()=1`)
+      .bind(account.telegramUserId, now),
+    db().prepare(`INSERT INTO creators(name,type,producer_id,status,created_at)
+      SELECT ?,a.selected_type,p.id,'active',? FROM telegram_accounts a
+      JOIN telegram_producer_links pl ON pl.telegram_user_id=a.telegram_user_id
+      JOIN producers p ON p.id=pl.producer_id
+      WHERE a.telegram_user_id=? AND a.role IN ('creator','producer') AND a.selected_type=?
+        AND a.pending_invite_hash IS NULL AND p.status='active'
+        AND NOT EXISTS(SELECT 1 FROM telegram_creator_links WHERE telegram_user_id=a.telegram_user_id)`)
+      .bind(creatorName, now, account.telegramUserId, account.selectedType),
+    db().prepare(`INSERT INTO telegram_creator_links(telegram_user_id,creator_id,chat_id,username,display_name,type_confirmed_at,created_at,updated_at)
+      SELECT ?,last_insert_rowid(),?,?,?,?,?,? WHERE changes()=1`)
+      .bind(account.telegramUserId, account.chatId, account.username, account.displayName, now, now, now),
+  ]);
+  const current = await accountFor({ telegramUserId: account.telegramUserId }, false);
+  const linked = await creatorFor(account.telegramUserId);
+  if (!linked && current.pendingInviteHash) return finishCreator(current);
+  if (!linked || !linked.typeConfirmedAt || linked.type !== current.selectedType
+    || linked.creatorStatus !== 'active' || linked.producerStatus !== 'active') {
+    throw new TelegramStorageError('Личный профиль не создан: профиль или продюсер отключён либо настройка изменилась. Повторите /start.', 409);
+  }
+  return getTelegramContext({ telegramUserId: account.telegramUserId });
 }
 
 async function finishCreator(account: Account) {
@@ -251,7 +296,7 @@ async function finishCreator(account: Account) {
     }
     return getTelegramContext({ telegramUserId: account.telegramUserId });
   }
-  if (!account.pendingInviteHash) return getTelegramContext({ telegramUserId: account.telegramUserId });
+  if (!account.pendingInviteHash) return finishPersonalCreator(account);
   const invite = await findInvite(account.pendingInviteHash);
   validInvite(invite, account.telegramUserId);
   const name = `${(account.displayName || account.username || 'Креатор').slice(0, 50)} · TG ${account.telegramUserId}`;
@@ -291,7 +336,7 @@ async function finishCreator(account: Account) {
 export async function requireTelegramCreatorReady(userId: string) {
   const context = await getTelegramContext({ telegramUserId: userId });
   if (!context.canSubmit) throw new TelegramStorageError(
-    !context.binding?.typeConfirmedAt ? 'Перед добавлением канала выберите ИИ-контент или UGC и примите приглашение продюсера'
+    !context.binding?.typeConfirmedAt ? 'Перед добавлением канала выберите свою роль и тип: ИИ-контент или UGC'
       : 'Нужна Telegram-привязка активного продюсера. Попросите администратора проверить профиль', 409);
   return context.binding!;
 }
@@ -321,7 +366,7 @@ export async function listTelegramChannels(input: Input) {
     LEFT JOIN telegram_producer_links pl ON pl.producer_id = p.id
     LEFT JOIN telegram_accounts a ON a.telegram_user_id = pl.telegram_user_id
     WHERE ${producerMode ? 'c.producer_id = ?' : 't.telegram_user_id = ?'} AND ch.deleted_at IS NULL
-    ORDER BY c.id, ch.id LIMIT 50`).bind(producerMode ? context.producer!.id : identity.id).all()).results;
+    ORDER BY c.id, ch.id ${producerMode ? 'LIMIT 50' : ''}`).bind(producerMode ? context.producer!.id : identity.id).all()).results;
 }
 
 export async function manageTelegramChannel(input: Input) {

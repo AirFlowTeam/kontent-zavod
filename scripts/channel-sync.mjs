@@ -1,10 +1,9 @@
 #!/usr/bin/env node
 
 import { runYtDlp } from './yt-dlp-runner.mjs';
-import { ensureMetrics, mapYtDlpResult, ytDlpChannelUrl, classifyProviderError } from './channel-parser-lib.mjs';
-import { fetchPublicProfile, parseVkProfile } from './channel-providers.mjs';
+import { ensureMetrics, classifyProviderError } from './channel-parser-lib.mjs';
 import { parseRutubeProfile } from './rutube-provider.mjs';
-import { collectAuthorized, refreshAccess, SocialApiError } from '../lib/social-api.mjs';
+import { collectConnectedChannel } from './authorized-channel-sync.mjs';
 
 const baseUrl = (process.env.CONTENT_FACTORY_BASE_URL || 'http://127.0.0.1:18082').replace(
   /\/$/,
@@ -14,7 +13,6 @@ const syncSecret = process.env.SYNC_SECRET;
 const ytDlpBin = process.env.YTDLP_BIN || '/usr/local/bin/yt-dlp';
 const pollIntervalMs = Math.max(10, Number(process.env.SYNC_POLL_SECONDS) || 45) * 1_000;
 const commandTimeoutMs = Math.max(60, Number(process.env.PARSER_TIMEOUT_SECONDS) || 180) * 1_000;
-const playlistLimit = Math.max(10, Number(process.env.PARSER_PLAYLIST_LIMIT) || 120);
 if (!['127.0.0.1', 'localhost', '[::1]'].includes(new URL(baseUrl).hostname)) throw new Error('Collector backend must be loopback');
 
 if (!syncSecret) {
@@ -115,47 +113,23 @@ async function processChannel(channel) {
   try {
     metrics = null;
     connection = (await syncRequest({ action: 'connection', channelId: channel.id, leaseToken: channel.leaseToken })).connection;
-    if (connection) {
-      const options = { signal: requestSignal(commandTimeoutMs), tiktokClientKey: process.env.TIKTOK_CLIENT_KEY, tiktokClientSecret: process.env.TIKTOK_CLIENT_SECRET, vkClientId: process.env.VK_CLIENT_ID, vkServiceToken: process.env.VK_SERVICE_TOKEN, expectedAccountId: connection.accountId };
-      const shouldRefresh = ['TikTok', 'VK'].includes(channel.platformName) || (['Instagram', 'Threads'].includes(channel.platformName) && Date.now() - Date.parse(connection.refreshedAt || connection.version) >= 24 * 60 * 60_000);
-      if (shouldRefresh) {
-        const updated = await refreshAccess(channel.platformName, connection.credentials, options);
-        if (updated) {
-          // Persist rotating refresh tokens before optional profile/video requests.
-          const saved = await reportResult({ action: 'updateConnection', channelId: channel.id, leaseToken: channel.leaseToken, version: connection.version, ...updated });
-          connection = { ...connection, ...updated, version: saved.version };
-        } else if (channel.platformName !== 'YouTube') throw new SocialApiError('Автопродление не настроено. Проверьте refresh token и приложение в инструкции площадки.');
-      }
-      metrics = await collectAuthorized(channel, connection, options);
-    }
-    if (!metrics && channel.platformName === 'Threads') throw new SocialApiError('Канал Threads сохранён. Креатору нужно подключить свой Threads в боте → «Подключить мой API».');
-    if (!metrics && channel.platformName === 'YouTube' && process.env.YOUTUBE_API_KEY) {
-      try {
-        metrics = await collectAuthorized(channel, { credentials: { accessToken: process.env.YOUTUBE_API_KEY } }, { signal: requestSignal(commandTimeoutMs) });
-      } catch (error) {
-        console.warn(`${new Date().toISOString()} YouTube API fallback: ${compactError(error)}`);
-      }
-    }
-    if (!metrics && channel.platformName === 'RuTube') {
-      // An incomplete listing must fail, not fall back to the incorrect profile count.
+    if (channel.platformName === 'RuTube') {
       metrics = await parseRutubePublicProfile(channel);
-    }
-    if (!metrics) {
-      if (channel.platformName === 'YouTube') {
-        try { metrics = await fetchPublicProfile(channel, { signal: requestSignal(35_000) }); }
-        catch (error) { console.warn(`YouTube public fallback: ${compactError(error)}`); }
-      } else if (['TikTok', 'Instagram'].includes(channel.platformName)) {
-        metrics = await fetchPublicProfile(channel, { signal: requestSignal(35_000) });
-      } else if (channel.platformName === 'VK') {
-        metrics = await parseVkProfile(channel, { token: process.env.VK_API_TOKEN, signal: requestSignal(35_000) });
-      }
-    }
-    if (!metrics) {
-      const youtubeFallback = channel.platformName === 'YouTube';
-      const raw = await runYtDlp(ytDlpChannelUrl(channel), { binary: ytDlpBin, timeoutMs: commandTimeoutMs,
-        playlistLimit, metadataOnly: youtubeFallback, cookieFile: process.env.YTDLP_COOKIES_FILE,
-        proxyUrl: process.env.PARSER_PROXY_URL, signal: stopController.signal });
-      metrics = mapYtDlpResult(raw, { forceUnknownPublications: youtubeFallback, platformName: channel.platformName });
+    } else {
+      metrics = await collectConnectedChannel(channel, connection, {
+        signal: requestSignal(commandTimeoutMs),
+        env: process.env,
+        tiktokClientKey: process.env.TIKTOK_CLIENT_KEY,
+        tiktokClientSecret: process.env.TIKTOK_CLIENT_SECRET,
+        vkClientId: process.env.VK_CLIENT_ID,
+        vkServiceToken: process.env.VK_SERVICE_TOKEN,
+        saveConnection: async (updated, version) => {
+          const saved = await reportResult({ action: 'updateConnection', channelId: channel.id,
+            leaseToken: channel.leaseToken, version, ...updated });
+          connection = { ...connection, ...updated, version: saved.version };
+          return saved;
+        },
+      });
     }
     ensureMetrics(metrics);
   } catch (error) {

@@ -5,6 +5,7 @@ the host Nginx instance.
 
 - Current VPS: `217.60.183.146`; Worker listener: `127.0.0.1:18084`
 - Dashboard: `https://kontent-zavod.217-60-183-146.sslip.io:21443/`
+- Public user guide: `https://kontent-zavod.217-60-183-146.sslip.io:21443/guide/`
 - Unit templates retain the original server ports; preserve the current host's installed configuration when deploying.
 - Application releases: `/opt/kontent-zavod/releases`
 - Current release symlink: `/opt/kontent-zavod/current`
@@ -21,10 +22,22 @@ The Worker must run as a single process because its D1 binding is backed by
 local Miniflare state. Keep the state directory outside release folders and do
 not commit Nginx Basic Auth credentials or other secrets.
 
+The public guide is a standalone static file served directly by Nginx from
+`/var/www/kontent-zavod-guide/index.html`, outside application releases. Its source
+is `guides/kontent-zavod-guide.html`. Copy only this file (directory `0755`, file
+`0644`). The exact `/guide` and `/guide/` locations in `nginx.conf` bypass Basic
+Auth only for the guide; `/guide` redirects to `/guide/`. Preserve these locations
+on future deployments. Do not make a whole application or repository directory
+public. For configuration changes, back up the installed config, run `nginx -t`,
+and reload Nginx. Verify `/guide/` returns 200 without credentials, `/` and
+`/api/data` return 401, and service-only endpoints remain externally forbidden.
+
 The collector claims due channels from the loopback-only `/api/sync` endpoint
 and updates successful channels every 24 hours (first collection immediately).
 Failed requests use bounded retries; expired leases recover after a restart.
-It uses YouTube Data API when `YOUTUBE_API_KEY` is configured, RuTube's
+YouTube uses only each channel’s encrypted personal Data API key; the legacy
+`YOUTUBE_API_KEY` is ignored and anonymous metric fallbacks are disabled for YouTube.
+Missing personal access yields `needs_auth`. Other sources include RuTube's
 first-party profile API (including `/u/name` resolution), TikTok and Instagram
 public profile JSON, and VK API when `VK_API_TOKEN` is configured. `yt-dlp` is a
 best-effort fallback. It never stores individual publications. Optional
@@ -94,3 +107,21 @@ For the original VPS schema use `migrate-basic-metrics.py` after stopping all th
 services. It validates the prior schema and creates an exclusive SQLite backup.
 Do not rerun 0005 or the baseline migrations. Preserve the existing service env,
 TLS, Basic Auth, ports, and passwords.
+
+Guided creator journey (2026-09-16): `/start` and `/guide` resume a saved checklist
+of all six platforms. A creator adds every account or explicitly marks a platform
+absent; an existing channel always takes precedence over that mark. Metrics,
+access, and app readiness are separate states. Per-channel rechecks are ownership
+checked, throttled to one request/minute, and preserve active collector leases.
+Telegram sends downloadable UTF-8 TXT via `guide:file` / `social:file:<platform>`.
+Sources are `lib/social-guide-files.mjs`; run `node scripts/export-social-guides.mjs`
+to refresh `docs/creator-guides/`.
+
+Before switching to this release, stop all three services and run
+`migrate-journey.py DATABASE drizzle/0011_material_deathbird.sql UNIQUE_BACKUP`.
+It adds only journey choices and recheck receipts. Do not replay baseline migrations.
+`reset-bot-data.py DATABASE --scope channels|all` is a separate dry-run tool;
+execute it with `--apply --backup UNIQUE_BACKUP` only for the owner's chosen scope.
+`channels` archives channels and clears saved API access while retaining teams and
+history; `all` removes accounts, teams and their content records from the live DB.
+Deployment itself does not authorize guessing an unanswered reset scope.

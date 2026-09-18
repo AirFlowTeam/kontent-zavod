@@ -2,6 +2,8 @@ import { extractMessageUrls } from './telegram-bot-lib.mjs';
 
 export function invitationFromMessage(message, botUsername) {
   const text = String(message?.text ?? message?.caption ?? '').trim();
+  const check = text.match(/^\/start(?:@\w+)?\s+check(?:_([1-9]\d{0,14}))?$/i);
+  if (check) return { kind: 'check', channelId: check[1] ? Number(check[1]) : undefined };
   const raw = text.match(/^(?:\/start(?:@\w+)?\s+)?(c_[a-f0-9]{32,64})$/i)?.[1];
   if (raw) return { kind: 'invite', token: raw.slice(2).toLowerCase() };
   const candidates = new Set();
@@ -19,5 +21,7 @@ export function invitationFromMessage(message, botUsername) {
     return null;
   }
   const payload = [...candidates][0];
+  const checkPayload = payload.match(/^check(?:_([1-9]\d{0,14}))?$/);
+  if (checkPayload) return { kind: 'check', channelId: checkPayload[1] ? Number(checkPayload[1]) : undefined };
   return /^c_[a-f0-9]{32,64}$/.test(payload) ? { kind: 'invite', token: payload.slice(2) } : { kind: 'invalid' };
 }

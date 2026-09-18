@@ -1,23 +1,25 @@
 import { extractMessageUrls } from './telegram-bot-lib.mjs';
-import { channelSyncHelp, channelCoverage } from '../lib/channel-sync-help.mjs';
+import { channelCoverage } from '../lib/channel-sync-help.mjs';
 import { invitationFromMessage } from './telegram-invitation.mjs';
 import { randomBytes } from 'node:crypto';
 import { socialInstructions } from '../lib/social-instructions.mjs';
-import { channelInstructions, linkPrompt, MAX_LINKS_PER_MESSAGE } from '../lib/channel-instructions.mjs';
+import { channelInstructions, MAX_LINKS_PER_MESSAGE } from '../lib/channel-instructions.mjs';
 import { createTelegramAdminFlow } from './telegram-admin-flow.mjs';
+import { channelJourney } from '../lib/social-journey.mjs';
+import { containsGoogleApiKey } from './telegram-google-key.mjs';
+import { telegramYouTubeError } from './telegram-youtube-error.mjs';
 
 const keyboard = (rows) => ({ reply_markup: { inline_keyboard: rows } });
 export const homeMenu = keyboard([[{ text: '⌂ Главное меню', callback_data: 'menu:home' }]]);
 const invitationHelp = keyboard([[{ text: 'Как получить приглашение', callback_data: 'menu:invite-help' }], [{ text: '← Выбрать роль', callback_data: 'menu:roles' }]]);
 const roles = keyboard([[{ text: 'Я продюсер', callback_data: 'role:producer' }, { text: 'Я креатор', callback_data: 'role:creator' }]]);
-const types = keyboard([[{ text: 'ИИ-контент', callback_data: 'type:AI' }, { text: 'UGC — контент с людьми', callback_data: 'type:UGC' }], [{ text: '← Выбрать роль', callback_data: 'menu:roles' }]]);
-const producerMenu = keyboard([
-  [{ text: '＋ Добавить креатора', callback_data: 'invite:new' }],
-  [{ text: 'Мои креаторы', callback_data: 'menu:creators' }, { text: 'Каналы и статистика', callback_data: 'menu:channels' }],
-  [{ text: 'Профиль', callback_data: 'menu:profile' }],
+const types = keyboard([[{ text: 'ИИ', callback_data: 'type:AI' }, { text: 'UGC', callback_data: 'type:UGC' }]]);
+const producerMenu = keyboard([[{ text: 'Пригласить креатора', callback_data: 'invite:new' }], [{ text: 'Креаторы и каналы', callback_data: 'menu:creators' }], [{ text: 'Назад', callback_data: 'menu:home' }]]);
+const creatorMenu = keyboard([[{ text: 'Добавить канал', callback_data: 'menu:add-channel' }], [{ text: 'Мои каналы', callback_data: 'menu:channels' }]]);
+const platformsKeyboard = () => keyboard([
+  ...['YouTube', 'RuTube', 'VK', 'Instagram', 'Threads', 'TikTok'].map((name) => [{ text: name, callback_data: `guide:link:${name}:0` }]),
+  [{ text: 'Назад', callback_data: 'menu:home' }],
 ]);
-const creatorMenu = keyboard([[{ text: '＋ Добавить ссылки', callback_data: 'menu:add-channel' }], [{ text: 'Мои каналы', callback_data: 'menu:channels' }, { text: 'Профиль', callback_data: 'menu:profile' }], [{ text: 'Подключить мой API', callback_data: 'menu:connections' }], [{ text: 'Как начать · инструкции', callback_data: 'menu:guide' }]]);
-const platformsKeyboard = () => keyboard([...Object.keys(channelInstructions).map((name) => [{ text: name, callback_data: `guide:link:${name}:0` }]), [{ text: 'Ссылки добавлены → далее', callback_data: 'menu:connections' }], ...homeMenu.reply_markup.inline_keyboard]);
 
 export function telegramContact(id, username) {
   return username ? `@${username.replace(/^@/, '')}` : id ? `Telegram ID ${id}` : 'не привязан';
@@ -28,7 +30,7 @@ function identity(user, chatId) {
     displayName: [user.first_name, user.last_name].filter(Boolean).join(' ') || null };
 }
 
-export function createTelegramBotFlow({ backend, send: deliver, answerCallback, processLink, botUsername }) {
+export function createTelegramBotFlow({ backend, send: deliver, sendGuide, answerCallback, processLink, botUsername }) {
   const send = (chatId, text, extra = homeMenu) => deliver(chatId, text, extra);
   const adminFlow = createTelegramAdminFlow({ backend, send, botUsername, showPersonal: showContext });
   const confirmations = new Map();
@@ -40,75 +42,115 @@ export function createTelegramBotFlow({ backend, send: deliver, answerCallback, 
     map.set(id, { ...value, expiresAt: expiresAt() });
   }
   function socialMenu(chatId) {
-    return send(chatId, 'Инструкции по API — выберите площадку. Личный доступ подключает только сам креатор из своего Telegram. Продюсеру токены передавать не нужно. Настройки приложения площадки не заменяют ваше личное разрешение.', keyboard([...Object.keys(socialInstructions).map((name) => [{ text: name, callback_data: `social:help:${name}` }]), ...homeMenu.reply_markup.inline_keyboard]));
+    return send(chatId, 'Для какой соцсети нужна инструкция?', keyboard([
+      ...Object.keys(socialInstructions).map((name) => [{ text: name, callback_data: `social:help:${name}` }]),
+      [{ text: 'Назад', callback_data: 'menu:home' }],
+    ]));
+  }
+  async function openConnection(chatId, actor, id, notice = '', knownChannel) {
+    const channel = knownChannel || await ownedChannel(actor, id);
+    if (!channel) return send(chatId, 'Канал недоступен.');
+    if (channel.platformName === 'RuTube') return channelCard(chatId, channel, true);
+    const saved = await backend('journey', actor);
+    const platform = channel.platformName;
+    const setup = (saved.setup || []).find((item) => item.platformName === platform);
+    const intro = notice ? `${notice}\n\n` : '';
+    if (setup?.available !== true) return send(chatId, `${intro}${platform} · подключение\n\n${setup?.available === false
+      ? setup.reason || `Официальный вход ${platform} ещё не включён. Администратор сервиса должен завершить настройку; передайте продюсеру название площадки и ссылку на канал.`
+      : 'Не удалось подтвердить готовность официального входа. Попробуйте ещё раз; если статус не изменится, передайте продюсеру название площадки и ссылку на канал.'}\n\nПовторно добавлять канал не нужно.`, keyboard([
+      [{ text: 'Проверить доступность входа', callback_data: `social:connect:${id}` }],
+      [{ text: 'Инструкция файлом', callback_data: `social:file:${platform}` }],
+      [{ text: 'Назад к каналу', callback_data: `channel:show:${id}` }],
+    ]));
+    const result = await backend('connectSocial', { ...actor, id });
+    if (result.connection.platformName !== platform) return send(chatId, 'Канал изменился. Откройте «Мои каналы» и выберите его заново.', creatorMenu);
+    const login = platform === 'YouTube' ? 'Войти через Google' : `Войти через ${platform}`;
+    const step = platform === 'YouTube'
+      ? 'Войдите через Google аккаунтом владельца этого YouTube-канала и разрешите чтение данных.'
+      : `Войдите в свой ${platform} и разрешите чтение статистики.`;
+    return send(chatId, `${intro}${platform} · ${channel.title || channel.url}\n\n${step}\n\nПосле подтверждения вернитесь в бот и обновите результат.${channel.status === 'inactive' ? ' Затем нажмите «Возобновить сбор».' : ''} Ссылка личная, действует 10 минут.`, keyboard([
+      [{ text: login, url: result.connection.url }],
+      [{ text: channel.status === 'inactive' ? 'Возобновить сбор' : 'Обновить результат', callback_data: `channel:${channel.status === 'inactive' ? 'resume' : 'show'}:${id}` }],
+      [{ text: 'Помощь', callback_data: `channel:help:${id}` }],
+    ]));
+  }
+  async function youtubeKeyMenu(chatId, actor, page = 0, notice = '') {
+    const context = await backend('context', actor);
+    if (!context.canSubmit) {
+      if (notice) await send(chatId, notice, {});
+      return showContext(chatId, context);
+    }
+    const result = await backend('channels', { ...actor, scope: 'own' });
+    const own = (result.channels || []).filter((channel) => channel.platformName === 'YouTube'
+      && String(channel.creatorTelegramId) === actor.telegramUserId);
+    const intro = notice ? `${notice}\n\n` : '';
+    if (!own.length) return send(chatId, `${intro}Сначала пришлите ссылку на свой YouTube-канал. После добавления подключите его через Google.`, keyboard([
+      [{ text: 'Как добавить YouTube', callback_data: 'guide:link:YouTube:0' }], ...homeMenu.reply_markup.inline_keyboard,
+    ]));
+    if (own.length === 1) return openConnection(chatId, actor, own[0].id, notice, own[0]);
+    const lastPage = Math.floor((own.length - 1) / 20);
+    const currentPage = Math.min(page, lastPage);
+    const navigation = [];
+    if (currentPage) navigation.push({ text: '← Назад', callback_data: `youtube:keys:${currentPage - 1}` });
+    if (currentPage < lastPage) navigation.push({ text: 'Далее →', callback_data: `youtube:keys:${currentPage + 1}` });
+    return send(chatId, `${intro}Какой свой YouTube-канал подключить через Google? Выберите канал ниже.`, keyboard([
+      ...own.slice(currentPage * 20, currentPage * 20 + 20).map((channel) => [{ text: `YouTube · ${channel.title || channel.url}`.slice(0, 60), callback_data: `social:personal:${channel.id}` }]),
+      ...(navigation.length ? [navigation] : []), ...homeMenu.reply_markup.inline_keyboard,
+    ]));
   }
   async function connectionMenu(chatId, actor, platform) {
     const context = await backend('context', actor);
-    if (context.role === 'producer' && !context.dualRole) return send(chatId, 'API подключают сами креаторы из своих Telegram-аккаунтов. Отправьте им приглашение и попросите открыть «Подключить мой API». Токены продюсеру пересылать не нужно.', producerMenu);
     if (!context.canSubmit) return showContext(chatId, context);
     const result = await backend('channels', { ...actor, scope: 'own' });
     const own = (result.channels || []).filter((c) => String(c.creatorTelegramId) === actor.telegramUserId && (!platform || c.platformName === platform));
-    if (!own.length) return send(chatId, `${platform ? `Сначала добавьте свой канал ${platform}.` : 'Сначала добавьте хотя бы один канал.'}\n\n${linkPrompt}`, platformsKeyboard());
-    const rows = own.filter((c) => c.platformName !== 'RuTube').map((c) => [{ text: `${c.connectionStatus === 'connected' ? '✓' : 'Подключить'} ${c.platformName} · ${c.title || c.url.split('/').at(-1)}`.slice(0, 60), callback_data: `social:connect:${c.id}` }]);
-    return send(chatId, `Шаг 4 из 4 — личный доступ.\n\n${rows.length ? 'Выберите свой канал ниже. Откройте защищённую форму из бота и войдите в соцсеть либо вставьте готовый API-ключ. Доступ закрепится только за вами и выбранным каналом.' : 'Для ваших каналов RuTube ключ не нужен — они уже в очереди на проверку.'}\n\nПотом нажмите «Проверить подключение». Сбор — раз в сутки. Если приложение ещё не настроено, канал останется сохранённым; это не ошибка ссылки. Пароли и токены текстом в чат не отправляйте.`, keyboard([...rows, [{ text: 'Проверить подключение', callback_data: 'menu:channels' }], [{ text: 'Как получить доступ', callback_data: 'menu:social' }], [{ text: '＋ Добавить ещё ссылки', callback_data: 'menu:add-channel' }], ...homeMenu.reply_markup.inline_keyboard]));
+    if (!own.length) return send(chatId, 'Сначала добавьте канал. Какая соцсеть?', platformsKeyboard());
+    if (own.length === 1) return channelCard(chatId, own[0], true);
+    return channelList(chatId, own, 0, 'own');
   }
-  async function guide(chatId, actor) {
-    const context = await backend('context', actor);
+  async function guide(chatId, actor, options = {}) {
+    const context = options.context || await backend('context', actor);
     if (!context.canSubmit) return showContext(chatId, context);
-    return send(chatId, 'Ваше приглашение принято, тип контента выбран.\n\nДальше 2 шага:\n3. Добавьте ссылки на свои каналы — можно сразу несколько.\n4. Подключите личный доступ там, где он нужен.\n\nВ любой момент можно вернуться сюда: сохранённые каналы не потеряются.', keyboard([[{ text: '3. Добавить ссылки', callback_data: 'menu:add-channel' }], [{ text: '4. Подключить мой API', callback_data: 'menu:connections' }], ...homeMenu.reply_markup.inline_keyboard]));
+    const result = await backend('channels', { ...actor, scope: 'own' });
+    const own = (result.channels || []).filter((c) => String(c.creatorTelegramId) === actor.telegramUserId);
+    const next = own.find((c) => !['ready', 'limited'].includes(channelJourney(c).state));
+    if (next || own[0]) return channelCard(chatId, next || own[0], true);
+    return home(chatId, context, own.length ? 'Все добавленные каналы проверены. Показатели и ограничения — в «Моих каналах».' : undefined);
   }
-  function instruction(chatId, name, index, kind) {
+  function instruction(chatId, name, index, kind, channelId) {
     const steps = kind === 'link' ? channelInstructions[name] : socialInstructions[name]?.steps;
     if (!steps || !Number.isInteger(index) || index < 0 || index >= steps.length) return socialMenu(chatId);
-    const prefix = kind === 'link' ? 'guide:link' : 'social:help';
-    const navigation = [];
-    if (index) navigation.push({ text: '← Назад', callback_data: `${prefix}:${name}:${index - 1}` });
-    if (index + 1 < steps.length) navigation.push({ text: 'Далее →', callback_data: `${prefix}:${name}:${index + 1}` });
-    return send(chatId, `${name} · ${kind === 'link' ? 'добавление ссылки' : 'подключение доступа'}\nШаг ${index + 1} из ${steps.length}\n\n${steps[index]}`, keyboard([
-      ...(navigation.length ? [navigation] : []),
-      [{ text: kind === 'link' ? 'Ссылка отправлена → подключить API' : 'Выбрать мой канал → подключить', callback_data: `connections:${name}` }],
-      ...(kind === 'link' ? [] : [[{ text: 'Официальная документация', url: socialInstructions[name].docs }]]),
-      [{ text: 'Другие площадки', callback_data: kind === 'link' ? 'menu:add-channel' : 'menu:social' }], ...homeMenu.reply_markup.inline_keyboard,
+    if (kind === 'link') return send(chatId, `${name}\n\n${steps.join('\n\n')}\n\nОтправьте ссылку следующим сообщением.`, keyboard([
+      [{ text: 'Другая соцсеть', callback_data: 'menu:add-channel' }], [{ text: 'Назад', callback_data: 'menu:home' }],
+    ]));
+    const next = index + 1 < steps.length
+      ? { text: 'Далее', callback_data: channelId ? `access:step:${channelId}:${index + 1}` : `social:help:${name}:${index + 1}` }
+      : { text: name === 'RuTube' ? 'Проверить результат' : 'Подключить доступ', callback_data: channelId ? `${name === 'RuTube' ? 'channel:show' : 'social:connect'}:${channelId}` : `connections:${name}` };
+    return send(chatId, `${name} · шаг ${index + 1} из ${steps.length}\n\n${steps[index]}`, keyboard([
+      [next], [{ text: 'Инструкция файлом', callback_data: `social:file:${name}` }],
+      [{ text: 'Назад к каналу', callback_data: channelId ? `channel:show:${channelId}` : `connections:${name}` }],
+    ]));
+  }
+  function home(chatId, context, notice) {
+    return send(chatId, notice || `${context.role === 'producer' ? 'Продюсер' : 'Креатор'} · ${context.binding?.type === 'AI' ? 'ИИ' : 'UGC'}\nДобавьте свой канал — помогу подключить доступ и получить статистику.`, keyboard([
+      ...creatorMenu.reply_markup.inline_keyboard,
+      ...(context.canProduce ? [[{ text: 'Моя команда', callback_data: 'menu:team' }]] : []),
     ]));
   }
   async function showContext(chatId, context) {
-    if (context.ownInvite) return send(chatId, 'Это приглашение для вашего креатора. Отправьте ему ссылку — свою роль менять не нужно.');
-    if (context.dualRole && (context.producer || context.binding)) {
-      const inactiveCreator = context.binding && (context.binding.creatorStatus !== 'active' || context.binding.producerStatus !== 'active');
-      const needsType = context.binding && !context.binding.typeConfirmedAt && !inactiveCreator;
-      const notice = [context.producer?.status === 'inactive' ? 'Продюсерский профиль отключён в платформе.' : '',
-        inactiveCreator ? 'Профиль креатора или его продюсер отключён в платформе.' : needsType ? 'Чтобы добавлять свои каналы, подтвердите тип контента кнопкой ниже. Он выбирается один раз.'
-          : context.binding && !context.binding.producerTelegramId ? 'Для своих каналов требуется Telegram-привязка продюсера креатора в платформе.' : ''].filter(Boolean).join('\n');
-      return send(chatId, `${context.canProduce && context.canSubmit ? 'Вы — продюсер и креатор одновременно.' : 'Ваш личный кабинет'}\n\nПродюсер: ${context.producer?.name || 'профиль ещё не создан'}\nКреатор: ${context.binding?.name || 'профиль ещё не создан'}${context.binding?.typeConfirmedAt ? `\nТип контента: ${context.binding.type === 'AI' ? 'ИИ-контент' : 'UGC'}` : ''}\n\nПереключать роль не нужно. Личные каналы и каналы команды — в отдельных списках.${notice ? `\n\n${notice}` : '\nПриглашайте креаторов в команду и присылайте свои ссылки в этот же чат.'}`, keyboard([
-        ...(context.canProduce ? [[{ text: '＋ Пригласить креатора', callback_data: 'invite:new' }], [{ text: 'Мои креаторы', callback_data: 'menu:creators' }, { text: 'Каналы команды', callback_data: 'menu:team-channels' }]] : !context.producer ? [[{ text: 'Добавить профиль продюсера', callback_data: 'admin:mode:producer' }]] : []),
-        ...(context.canSubmit ? [[{ text: '＋ Мои ссылки', callback_data: 'menu:add-channel' }, { text: 'Мои каналы', callback_data: 'menu:channels' }], [{ text: 'Подключить мой API', callback_data: 'menu:connections' }]]
-          : needsType ? [(context.selectedType ? [context.selectedType] : ['AI', 'UGC']).map((type) => ({ text: `Подтвердить ${type === 'AI' ? 'ИИ-контент' : 'UGC'}`, callback_data: `admin:type:${type}` }))]
-            : !context.binding ? [[{ text: 'Добавить мой профиль креатора', callback_data: 'admin:mode:creator' }]] : []),
-        [{ text: 'Админ-меню', callback_data: 'admin:home' }],
-      ]));
-    }
-    if (!context.role) return send(chatId, 'Добро пожаловать в «Контент-завод». Выберите свою роль:', roles);
-    if (context.role === 'producer') {
-      if (context.producer?.status !== 'active') return send(chatId, 'Продюсерский профиль отключён. Обратитесь к администратору.');
-      return send(chatId, `Вы — продюсер: ${context.producer.name}\n\nНажмите «Добавить креатора» и отправьте ему персональную ссылку. Он подтвердит тип контента и добавит свои каналы.`, producerMenu);
-    }
-    if (context.binding && (context.binding.creatorStatus !== 'active' || context.binding.producerStatus !== 'active')) {
-      return send(chatId, 'Ваш профиль или продюсер отключён. Обратитесь к администратору.');
+    if (context.ownInvite) return send(chatId, 'Это приглашение для другого креатора. Свой канал добавляется через главное меню.');
+    if (!context.role) return send(chatId, 'Кто вы?', roles);
+    if ((context.role === 'producer' && context.producer?.status === 'inactive') || (context.binding && (context.binding.creatorStatus !== 'active' || context.binding.producerStatus !== 'active'))) {
+      return send(chatId, 'Профиль отключён. Обратитесь к администратору.');
     }
     if (!context.binding && context.pendingInvite?.status && context.pendingInvite.status !== 'valid') {
-      return send(chatId, 'Приглашение больше не действует. Попросите продюсера новую персональную ссылку.', invitationHelp);
+      return send(chatId, 'Приглашение больше не действует. Попросите продюсера новую ссылку.', invitationHelp);
     }
-    if (!context.binding && !context.pendingInvite) {
-      return send(chatId, 'Шаг 1 из 4 — приглашение.\n\nБот открыт, но приглашение в команду ещё не получено. Откройте личную ссылку от своего продюсера или скопируйте её целиком и отправьте сюда. После этого выберете ИИ / UGC и добавите каналы.\n\nПовторно выбирать роль не нужно.', invitationHelp);
+    if (!context.binding?.typeConfirmedAt) {
+      if (context.selectedType) return send(chatId, 'Тип контента сохранён. Завершим подключение профиля.', keyboard([[{ text: 'Продолжить', callback_data: 'onboarding:resume' }]]));
+      return send(chatId, `Какой контент вы создаёте?${context.pendingInvite ? `\nКоманда: ${context.pendingInvite.producerName}` : ''}\nТип выбирается один раз для ваших каналов.`, types);
     }
-    if (!context.selectedType && !context.binding?.typeConfirmedAt) {
-      return send(chatId, `Шаг 2 из 4 — тип контента.\n\n${context.pendingInvite ? `Приглашение от продюсера: ${context.pendingInvite.producerName}\n\n` : ''}Перед добавлением каналов выберите тип контента. Он задаётся один раз для креатора и всех его каналов.`, types);
-    }
-    if (!context.binding) {
-      return send(chatId, `Тип: ${context.selectedType === 'AI' ? 'ИИ-контент' : 'UGC'}.\n\nПриглашение сохранено. Нажмите «Продолжить подключение», чтобы завершить привязку.`, keyboard([[{ text: 'Продолжить подключение', callback_data: 'onboarding:resume' }]]));
-    }
-    if (!context.canSubmit) return send(chatId, 'Для каналов нужна Telegram-привязка вашего продюсера. Попросите администратора связать существующий профиль продюсера с его Telegram.');
-    return send(chatId, `Креатор: ${context.binding.name}\nТип: ${context.binding.type === 'AI' ? 'ИИ-контент' : 'UGC'}\nПродюсер: ${context.binding.producerName} (${telegramContact(context.binding.producerTelegramId, context.binding.producerTelegramUsername)})\n\nШаг 3: пришлите все ссылки на свои каналы — до 10 одним сообщением. Можно отправить и ссылку на публикацию: сохраним её канал. Нужна помощь? Нажмите «Добавить ссылки».\n\nШаг 4: подключите свой доступ кнопкой «Подключить мой API». Первая проверка — сразу, затем раз в сутки.`, creatorMenu);
+    if (!context.canSubmit) return send(chatId, 'Не удалось открыть личные каналы: проверьте с администратором активность профиля и Telegram-привязку.');
+    return home(chatId, context);
   }
 
   async function showCreators(chatId, actor) {
@@ -118,42 +160,59 @@ export function createTelegramBotFlow({ backend, send: deliver, answerCallback, 
     for (let i = 0; i < context.creators.length; i += 10) {
       const page = context.creators.slice(i, i + 10);
       await send(chatId, page.map((c) => `${c.name} · ${c.type}\n${telegramContact(c.telegramUserId, c.telegramUsername)} · каналов: ${c.channelCount} · ${c.status === 'active' ? 'активен' : 'отключён'}`).join('\n\n'),
-        keyboard([...page.filter((c) => !c.telegramUserId && c.status === 'active').map((c) => [{ text: `Пригласить: ${c.name}`.slice(0, 60), callback_data: `invite:${c.id}` }]), [{ text: '⌂ Главное меню', callback_data: 'menu:home' }]]));
+        keyboard([...page.filter((c) => !c.telegramUserId && c.status === 'active').map((c) => [{ text: `Пригласить: ${c.name}`.slice(0, 60), callback_data: `invite:${c.id}` }]), [{ text: 'Каналы команды', callback_data: 'menu:team-channels' }], [{ text: 'Назад', callback_data: 'menu:team' }]]));
     }
   }
 
   async function invite(chatId, actor, updateId, creatorId) {
     const result = await backend('invite', { ...actor, updateId, ...(creatorId ? { creatorId } : {}) });
     const link = `https://t.me/${botUsername()}?start=c_${result.invite.token}`;
-    return send(chatId, `Приглашение креатора в вашу команду:\n${link}\n\nОтправьте эту персональную ссылку только нужному креатору. Она действует 7 дней и используется одним Telegram-аккаунтом. После входа креатор выберет ИИ / UGC и добавит каналы.`, keyboard([...producerMenu.reply_markup.inline_keyboard, [{ text: 'Личный кабинет', callback_data: 'menu:profile' }]]));
+    return send(chatId, `Приглашение креатора в вашу команду:\n${link}\n\nОтправьте эту персональную ссылку только нужному креатору. Она действует 7 дней и используется одним Telegram-аккаунтом. После входа креатор выберет ИИ / UGC и добавит каналы.`, keyboard([[{ text: 'Моя команда', callback_data: 'menu:team' }], [{ text: 'Назад', callback_data: 'menu:home' }]]));
   }
 
-  async function channels(chatId, actor, page = 0, scope) {
-    const context = await backend('context', actor);
-    const creatorMode = context.canSubmit;
-    const result = await backend('channels', { ...actor, ...(scope ? { scope } : {}) });
-    if (!result.channels?.length) return send(chatId, 'Каналов пока нет. Креатор может прислать ссылки на свои каналы или видео. Нажмите «Добавить ссылки», если нужна пошаговая помощь.', keyboard([[{ text: '＋ Добавить ссылки', callback_data: 'menu:add-channel' }], ...homeMenu.reply_markup.inline_keyboard]));
-    const count = result.channels.length;
-    const pageCount = Math.ceil(count / 5);
+  function channelCard(chatId, channel, ownChannel) {
+    const state = channelJourney(channel);
+    const number = (value) => value == null ? 'не получено' : Number(value).toLocaleString('ru-RU');
+    const waiting = channel.syncStatus === 'pending' || channel.lastSyncStatus === 'syncing';
+    const ready = ['ready', 'limited'].includes(state.state);
+    const next = state.state === 'access' ? 'Войдите аккаунтом владельца. Затем проверим показатели этого канала.'
+      : state.state === 'paused' ? 'Сбор приостановлен. Возобновите его для обновления статистики.'
+      : waiting ? 'Проверка в очереди. Через несколько минут нажмите «Обновить результат».'
+      : ready ? 'Канал проверен. Дальше обновляем ежедневно.'
+      : 'Не все показатели получены. Повторите проверку или откройте помощь — там шаги подключения аккаунта.';
+    const action = ready ? { text: 'Добавить ещё канал', callback_data: 'menu:add-channel' }
+      : state.state === 'check' && waiting ? { text: 'Обновить результат', callback_data: `channel:show:${channel.id}` }
+      : { text: state.action, callback_data: state.callback };
+    const rows = ownChannel ? [[action], [{ text: 'Помощь', callback_data: `channel:help:${channel.id}` }], [{ text: 'Настройки', callback_data: `channel:settings:${channel.id}` }]]
+      : [[{ text: 'Инструкция для креатора', callback_data: `social:file:${channel.platformName}` }], [{ text: 'Назад к команде', callback_data: 'menu:team-channels' }]];
+    const updated = channel.metricsUpdatedAt ? new Intl.DateTimeFormat('ru-RU', { timeZone: 'Europe/Moscow', dateStyle: 'short', timeStyle: 'short' }).format(new Date(channel.metricsUpdatedAt)) : null;
+    return send(chatId, `${channel.platformName} · ${channel.title || channel.creatorName || 'канал'}\n${channel.url}\n${ownChannel ? '' : `Креатор: ${channel.creatorName} · ${telegramContact(channel.creatorTelegramId, channel.creatorTelegramUsername)}\n`}\nПросмотры: ${number(channel.totalViews)}\n${channel.platformName === 'Threads' ? 'Посты' : 'Ролики'}: ${number(channel.publicationCount)}\nЛайки: ${number(channel.totalLikes)}${updated ? `\nОбновлено: ${updated} МСК` : ''}\n\n${state.label}.\n${ownChannel ? next : 'Личный доступ подключает владелец канала в своём боте.'}${telegramYouTubeError(channel) ? `\n\n${telegramYouTubeError(channel)}` : ''}${channelCoverage(channel.parserSource) ? `\n\n${channelCoverage(channel.parserSource)}` : ''}`, keyboard(rows));
+  }
+  function channelList(chatId, items, page, scope) {
+    const pageCount = Math.ceil(items.length / 5);
     page = Math.min(page, pageCount - 1);
-    for (const channel of result.channels.slice(page * 5, page * 5 + 5)) {
-      const number = (value) => value === null || value === undefined ? 'недоступно' : Number(value).toLocaleString('ru-RU');
-      const partial = Boolean(channelCoverage(channel.parserSource)) || ['totalViews', 'publicationCount', 'totalLikes'].some((key) => channel[key] === null || channel[key] === undefined);
-      const status = { pending: 'ожидает проверки', success: partial ? 'обновлено частично' : 'обновлено', needs_auth: 'сбор ограничен доступом площадки', error: 'ошибка, повторим автоматически' }[channel.syncStatus] ?? channel.syncStatus;
-      const help = [channelSyncHelp(channel.platformName, channel.syncStatus), channelCoverage(channel.parserSource), channel.connectionStatus ? `API-доступ: ${channel.connectionStatus === 'needs_auth' ? 'требуется переподключение' : 'подключён'} · ${channel.connectionUsername || ''}${channel.connectionExpiresAt ? `\nСрок: ${new Date(channel.connectionExpiresAt).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' })} (МСК)` : '\nСрок не подтверждён API'}` : null].filter(Boolean).join('\n\n');
-      const controls = creatorMode && String(channel.creatorTelegramId) === actor.telegramUserId ? [
-        [{ text: 'Инструкция площадки', callback_data: `social:help:${channel.platformName}` }],
-        ...(channel.platformName !== 'RuTube' ? [[{ text: channel.connectionStatus ? 'Переподключить API' : 'Подключить API', callback_data: `social:connect:${channel.id}` }, ...(channel.connectionStatus ? [{ text: 'Отключить доступ', callback_data: `social:disconnect:${channel.id}` }] : [])]] : []),
-        [{ text: 'Изменить ссылку', callback_data: `channel:edit:${channel.id}` }, { text: 'Удалить', callback_data: `channel:delete:${channel.id}` }],
-        [{ text: channel.status === 'inactive' ? 'Возобновить сбор' : 'Приостановить сбор', callback_data: `channel:${channel.status === 'inactive' ? 'resume' : 'pause'}:${channel.id}` }],
-      ] : [];
-      const updated = channel.metricsUpdatedAt ? new Intl.DateTimeFormat('ru-RU', { timeZone: 'Europe/Moscow', dateStyle: 'short', timeStyle: 'short' }).format(new Date(channel.metricsUpdatedAt)) : 'ещё нет';
-      await send(chatId, `${channel.title || channel.platformName}\n${channel.url}\nКреатор: ${channel.creatorName} (${telegramContact(channel.creatorTelegramId, channel.creatorTelegramUsername)})\nПродюсер: ${channel.producerName} (${telegramContact(channel.producerTelegramId, channel.producerTelegramUsername)})\nТип: ${channel.creatorType}\n\nПросмотры: ${number(channel.totalViews)}\n${channel.platformName === 'Threads' ? 'Посты' : 'Ролики'}: ${number(channel.publicationCount)}\nЛайки: ${number(channel.totalLikes)}\nСтатус: ${channel.status === 'inactive' ? 'сбор приостановлен' : status}\nОбновлено: ${updated} (МСК)${help ? `\n\n${help}` : ''}`, { reply_markup: { inline_keyboard: controls } });
-    }
-    const buttons = [];
-    if (page > 0) buttons.push({ text: '← Назад', callback_data: `${scope === 'team' ? 'team-channels' : 'channels'}:${page - 1}` });
-    if (page + 1 < pageCount) buttons.push({ text: 'Далее →', callback_data: `${scope === 'team' ? 'team-channels' : 'channels'}:${page + 1}` });
-    await send(chatId, `Страница ${page + 1} из ${pageCount}.${count === 50 ? ' Первые 50 каналов; полный список — в платформе.' : ''}\nНедоступно — площадка пока не передала показатель, это не ноль.`, keyboard([...(buttons.length ? [buttons] : []), [{ text: '⌂ Главное меню', callback_data: 'menu:home' }]]));
+    const prefix = scope === 'team' ? 'team-channels' : 'channels';
+    const navigation = [];
+    if (page > 0) navigation.push({ text: '←', callback_data: `${prefix}:${page - 1}` });
+    if (page + 1 < pageCount) navigation.push({ text: '→', callback_data: `${prefix}:${page + 1}` });
+    return send(chatId, `${scope === 'team' ? 'Каналы команды' : 'Мои каналы'} · ${items.length}\nВыберите канал${pageCount > 1 ? ` (страница ${page + 1}/${pageCount})` : ''}.`, keyboard([
+      ...items.slice(page * 5, page * 5 + 5).map((c) => [{ text: `${c.platformName} · ${c.title || c.creatorName || c.url}`.slice(0, 60), callback_data: `${scope === 'team' ? 'team' : 'channel'}:show:${c.id}` }]),
+      ...(navigation.length ? [navigation] : []), [{ text: 'Назад', callback_data: scope === 'team' ? 'menu:team' : 'menu:home' }],
+    ]));
+  }
+  async function channels(chatId, actor, page = 0, scope = 'own', channelId) {
+    const context = await backend('context', actor);
+    if (scope !== 'team' && !context.canSubmit) return showContext(chatId, context);
+    const result = await backend('channels', { ...actor, scope });
+    const items = scope === 'team' ? result.channels || [] : (result.channels || []).filter((c) => String(c.creatorTelegramId) === actor.telegramUserId);
+    if (!items.length) return send(chatId, scope === 'team' ? 'В команде пока нет каналов.' : 'Добавьте первый канал.', scope === 'team' ? producerMenu : creatorMenu);
+    const channel = channelId ? items.find((c) => c.id === channelId) : items.length === 1 ? items[0] : null;
+    if (channelId && !channel) return send(chatId, 'Канал недоступен.');
+    return channel ? channelCard(chatId, channel, scope !== 'team') : channelList(chatId, items, page, scope);
+  }
+  async function ownedChannel(actor, id) {
+    const result = await backend('channels', { ...actor, scope: 'own' });
+    return result.channels?.find((c) => c.id === id && String(c.creatorTelegramId) === actor.telegramUserId);
   }
 
   async function handleCommand(message, command, payload, updateId) {
@@ -162,8 +221,7 @@ export function createTelegramBotFlow({ backend, send: deliver, answerCallback, 
     if (command === 'social') return socialMenu(chatId);
     if (command === 'guide') return guide(chatId, actor);
     if (command === 'api') return connectionMenu(chatId, actor);
-    if (command === 'help') return send(chatId,
-      'Продюсер: /start → «Я продюсер» → «Добавить креатора» → передать ему персональное приглашение.\n\nКреатор: открыть приглашение → выбрать ИИ-контент или UGC → прислать ссылки на свои каналы или видео.\n\nСтатистика обновляется раз в сутки. /channels — каналы, показатели и статусы. /creators — команда продюсера. /profile — профиль. /role — переключить свою роль.\n\nПоддерживаются YouTube, RuTube, VK, TikTok, Instagram, Threads. /guide — пошаговый старт, /api — подключить свой доступ. Закрытые данные требуют доступа площадки; недоступные показатели не заменяются нулями.');
+    if (command === 'help') return send(chatId, 'Выберите роль → ИИ или UGC → «Добавить канал» → соцсеть. Отправьте ссылку и выполните следующий шаг под каналом.\n\nВойдите через свою соцсеть; YouTube подключается через Google, а RuTube читается по публичной ссылке. Если данных нет, нажмите «Помощь» в карточке канала. Там пошаговая инструкция и файл.\n\n/start — главное меню. /channels — ваши каналы. После подключения обновляем статистику ежедневно.', keyboard([[{ text: 'Продолжить подключение', callback_data: 'menu:journey' }], [{ text: 'Инструкция файлом', callback_data: 'guide:file' }], [{ text: 'Главное меню', callback_data: 'menu:home' }]]));
     if (command === 'role' || command === 'change') {
       const context = await backend('context', actor);
       return context.dualRole ? showContext(chatId, context) : send(chatId, 'Выберите свою роль. Чужие профили недоступны:', roles);
@@ -171,6 +229,7 @@ export function createTelegramBotFlow({ backend, send: deliver, answerCallback, 
     if (command === 'creators') return showCreators(chatId, actor);
     if (command === 'invite') return invite(chatId, actor, updateId);
     if (command === 'channels') return channels(chatId, actor);
+    if (command === 'start' && payload === 'check') return guide(chatId, actor);
     if (command === 'start' && payload.startsWith('c_')) return showContext(chatId, await backend('acceptInvite', { ...actor, token: payload.slice(2) }));
     return showContext(chatId, await backend('context', actor));
   }
@@ -180,10 +239,20 @@ export function createTelegramBotFlow({ backend, send: deliver, answerCallback, 
     if (!message?.from || message.chat?.type !== 'private' || String(message.from.id) !== String(message.chat.id)) return;
     const text = typeof message.text === 'string' ? message.text.trim() : '';
     confirmations.delete(String(message.from.id));
+    if (containsGoogleApiKey(message)) {
+      adminFlow.cancel(message.from.id);
+      editingChannels.delete(String(message.from.id));
+      return youtubeKeyMenu(message.chat.id, identity(message.from, message.chat.id), 0,
+        'Ключ из сообщения не подключён. Для YouTube используйте вход через Google; сообщение с ключом удалите из чата.');
+    }
     const invitation = invitationFromMessage(message, botUsername());
     if (invitation) {
       adminFlow.cancel(message.from.id);
       editingChannels.delete(String(message.from.id));
+      if (invitation.kind === 'check') {
+        const actor = identity(message.from, message.chat.id);
+        return invitation.channelId ? channels(message.chat.id, actor, 0, 'own', invitation.channelId) : guide(message.chat.id, actor);
+      }
       if (invitation.kind !== 'invite') return send(message.chat.id, invitation.kind === 'multiple'
         ? 'В сообщении несколько приглашений. Отправьте только личную ссылку от своего продюсера.'
         : 'В этой ссылке нет действительного приглашения в команду. Попросите продюсера нажать «Добавить креатора» и отправить вам полученную персональную ссылку целиком.', invitationHelp);
@@ -203,7 +272,6 @@ export function createTelegramBotFlow({ backend, send: deliver, answerCallback, 
     if (text.startsWith('/')) return send(message.chat.id, 'Неизвестная команда. Нажмите /help.');
     const actor = identity(message.from, message.chat.id);
     const context = await backend('context', actor);
-    if (context.role === 'producer' && !context.dualRole && extractMessageUrls(message).length) return send(message.chat.id, 'Каналы добавляет сам креатор из своего Telegram. Нажмите «Добавить креатора» и отправьте ему приглашение.', producerMenu);
     if (!context.canSubmit) return showContext(message.chat.id, context);
     const urls = extractMessageUrls(message);
     const edit = editingChannels.get(actor.telegramUserId);
@@ -218,16 +286,17 @@ export function createTelegramBotFlow({ backend, send: deliver, answerCallback, 
       return send(message.chat.id, 'Ссылка изменена. Статистику нового адреса соберём заново; старые показатели к нему не переносятся.', keyboard([[{ text: 'Мои каналы', callback_data: 'menu:channels' }], ...homeMenu.reply_markup.inline_keyboard]));
     }
     if (urls.length > MAX_LINKS_PER_MESSAGE) return send(message.chat.id, `В одном сообщении можно до ${MAX_LINKS_PER_MESSAGE} ссылок. Разделите список на несколько сообщений. Из этого сообщения пока ничего не добавлено.`, creatorMenu);
-    if (!urls.length) return send(message.chat.id, 'Пришлите ссылку на свой канал или публикацию, начиная с https://. Можно до 10 ссылок одним сообщением. Ключи и токены сюда не вставляйте: для них кнопка «Подключить мой API».', creatorMenu);
+    if (!urls.length) return send(message.chat.id, 'Пришлите ссылку на свой канал, начиная с https://. Или нажмите «Добавить канал» — помогу найти ссылку.', creatorMenu);
     if (urls.length > 1) await send(message.chat.id, `Получено ссылок: ${urls.length}. Проверяю каждую по очереди; для ссылок на ролики это может занять несколько минут.`, {});
+    let savedChannel;
     for (const [itemIndex, url] of urls.entries()) {
-      try { await processLink(message.chat.id, message.from, update.update_id, url, itemIndex); }
+      try { const result = await processLink(message.chat.id, message.from, update.update_id, url, itemIndex); if (result?.channel?.creatorMatch !== false) savedChannel = result?.channel || savedChannel; }
       catch (error) {
         if (!error.userSafe || ![400, 403, 404, 409, 410, 422].includes(error.status)) throw error;
         await send(message.chat.id, `Ссылка ${itemIndex + 1} не добавлена: ${error.message}\nОстальные ссылки продолжаю проверять.`, creatorMenu);
       }
     }
-    if (urls.length > 1) return send(message.chat.id, 'Список обработан. Результат каждой ссылки — выше. Сохранённые каналы уже видны в платформе. Следующий шаг — личный доступ к соцсетям; повторно присылать успешные ссылки не нужно.', keyboard([[{ text: '4. Подключить мой API', callback_data: 'menu:connections' }], [{ text: 'Мои каналы', callback_data: 'menu:channels' }], [{ text: '＋ Добавить ещё ссылки', callback_data: 'menu:add-channel' }]]));
+    return savedChannel?.id ? channels(message.chat.id, actor, 0, 'own', savedChannel.id) : guide(message.chat.id, actor);
   }
 
   async function handleCallback(update) {
@@ -242,31 +311,91 @@ export function createTelegramBotFlow({ backend, send: deliver, answerCallback, 
     confirmations.delete(actor.telegramUserId);
     editingChannels.delete(actor.telegramUserId);
     if (await adminFlow.handleCallback(callback, actor, update.update_id)) return;
+    if (data === 'menu:team') {
+      const context = await backend('context', actor);
+      return context.canProduce ? send(message.chat.id, 'Моя команда', producerMenu) : showContext(message.chat.id, context);
+    }
+    const teamShow = data.match(/^team:show:([1-9]\d*)$/);
+    if (teamShow) return channels(message.chat.id, actor, 0, 'team', Number(teamShow[1]));
+    const settings = data.match(/^channel:(help|settings|access|manage):([1-9]\d*)$/);
+    const accessStep = data.match(/^access:step:([1-9]\d*):(\d{1,2})$/);
+    if (settings || accessStep) {
+      const id = Number(settings?.[2] || accessStep[1]);
+      const channel = await ownedChannel(actor, id);
+      if (!channel) return send(message.chat.id, 'Канал недоступен.');
+      if (settings?.[1] === 'help' || accessStep) return instruction(message.chat.id, channel.platformName, Number(accessStep?.[2] || 0), 'api', id);
+      const back = [{ text: 'Назад к каналу', callback_data: `channel:show:${id}` }];
+      if (settings[1] === 'access') return send(message.chat.id, 'Личный доступ к этому каналу', keyboard([
+        ...(channel.platformName !== 'RuTube' ? [[{ text: channel.connectionStatus ? 'Заменить доступ' : 'Подключить доступ', callback_data: `social:connect:${id}` }]] : []),
+        ...(channel.connectionStatus ? [[{ text: 'Отключить доступ', callback_data: `social:disconnect:${id}` }]] : []), back,
+      ]));
+      if (settings[1] === 'manage') return send(message.chat.id, 'Управление каналом', keyboard([
+        [{ text: 'Изменить ссылку', callback_data: `channel:edit:${id}` }],
+        [{ text: channel.status === 'inactive' ? 'Возобновить сбор' : 'Приостановить сбор', callback_data: `channel:${channel.status === 'inactive' ? 'resume' : 'pause'}:${id}` }],
+        [{ text: 'Удалить канал', callback_data: `channel:delete:${id}` }], back,
+      ]));
+      return send(message.chat.id, `${channel.platformName} · настройки`, keyboard([
+        ...(channel.platformName !== 'RuTube' ? [[{ text: 'Личный доступ', callback_data: `channel:access:${id}` }]] : []),
+        [{ text: 'Управление каналом', callback_data: `channel:manage:${id}` }],
+        [{ text: 'Главное меню', callback_data: 'menu:home' }],
+      ]));
+    }
     if (data === 'menu:social') return socialMenu(message.chat.id);
-    if (data === 'menu:guide') return guide(message.chat.id, actor);
+    if (data === 'menu:guide' || data === 'menu:journey') return guide(message.chat.id, actor);
     if (data === 'menu:connections') return connectionMenu(message.chat.id, actor);
+    const youtubeKeys = data.match(/^youtube:keys:(\d{1,6})$/);
+    if (youtubeKeys) return youtubeKeyMenu(message.chat.id, actor, Number(youtubeKeys[1]));
+    const guideFile = data.match(/^social:file:([A-Za-z]+)$/);
+    if (data === 'guide:file' || (guideFile && Object.hasOwn(socialInstructions, guideFile[1]))) {
+      if (sendGuide) return sendGuide(message.chat.id, guideFile?.[1]);
+      return guideFile ? instruction(message.chat.id, guideFile[1], 0, 'api') : guide(message.chat.id, actor);
+    }
+    const skipPlatform = data.match(/^journey:skip:([A-Za-z]+)$/);
+    if (skipPlatform && Object.hasOwn(channelInstructions, skipPlatform[1])) {
+      await backend('setJourneyPlatform', { ...actor, platformName: skipPlatform[1], status: 'skipped' });
+      return guide(message.chat.id, actor);
+    }
+    const checkChannel = data.match(/^channel:(check|show):([1-9]\d*)$/);
+    if (checkChannel) {
+      const id = Number(checkChannel[2]);
+      if (checkChannel[1] === 'check') {
+        const checked = await backend('recheckChannel', { ...actor, id });
+        if (checked.needsAccess) {
+          const platform = checked.platformName;
+          const login = platform === 'YouTube' ? 'Google' : platform === 'VK' ? 'VK ID' : platform;
+          return send(message.chat.id, `Сначала подключите ${platform} через ${login} аккаунтом владельца канала. Проверка начнётся после подтверждения доступа.`, keyboard([
+            [{ text: `Подключить ${platform}`, callback_data: `social:connect:${id}` }],
+            [{ text: `Инструкция ${platform} файлом`, callback_data: `social:file:${platform}` }],
+            [{ text: 'Мои каналы', callback_data: 'menu:channels' }],
+          ]));
+        }
+        const checkText = checked.inProgress ? 'Этот канал уже проверяется. Ниже — текущие показатели; результат можно открыть через несколько минут.'
+          : !checked.queued && checked.retryAfterSeconds > 0 ? `Проверка уже была запрошена. Повторный запрос доступен через ${checked.retryAfterSeconds} сек. Ниже — текущие показатели.`
+            : checked.queued ? 'Запрос на проверку принят. Сбор выполняется в очереди: подключённый аккаунт сам по себе ещё не означает, что показатели получены. Ниже — текущий результат; кнопку можно открыть повторно через несколько минут.'
+              : 'Не удалось поставить новую проверку: состояние канала изменилось. Ниже — текущий статус. При необходимости возобновите сбор и повторите проверку.';
+        await send(message.chat.id, checkText, {});
+      }
+      return channels(message.chat.id, actor, 0, 'own', id);
+    }
     const connectionPlatform = data.match(/^connections:([A-Za-z]+)$/);
     if (connectionPlatform && Object.hasOwn(socialInstructions, connectionPlatform[1])) return connectionMenu(message.chat.id, actor, connectionPlatform[1]);
     const step = data.match(/^(guide:link|social:help):([A-Za-z]+)(?::(\d{1,2}))?$/);
     if (step) return instruction(message.chat.id, step[2], Number(step[3] || 0), step[1] === 'guide:link' ? 'link' : 'api');
-    const social = data.match(/^social:(connect|disconnect|confirm-disconnect):([1-9]\d*)(?::([a-f0-9]{16}))?$/);
+    const social = data.match(/^social:(connect|personal|disconnect|confirm-disconnect):([1-9]\d*)(?::([a-f0-9]{16}))?$/);
     if (social) {
       const id = Number(social[2]);
-      if (social[1] === 'connect') {
-        const result = await backend('connectSocial', { ...actor, id });
-        return send(message.chat.id, `Подключение ${result.connection.platformName}.\n\nОткройте персональную форму и нажмите «Войти через соцсеть». Если администратор ещё не включил вход, форма подскажет, что сделать. Для YouTube вставьте свой API-ключ в эту форму. Вводить доступ может только сам креатор, для выбранного собственного канала.\n\nСсылка одноразовая, на 10 минут. Эта новая ссылка заменяет предыдущую для канала. Завершите вход в том же браузере. Не пересылайте ссылку; пароли и токены в сообщения не отправляйте.`, keyboard([[{ text: 'Открыть защищённую форму', url: result.connection.url }], [{ text: 'Мои каналы', callback_data: 'menu:channels' }]]));
-      }
+      if (social[1] === 'connect' || social[1] === 'personal') return openConnection(message.chat.id, actor, id);
       if (social[1] === 'confirm-disconnect') {
         if (!confirmation || confirmation.action !== 'disconnect' || confirmation.id !== id || confirmation.nonce !== social[3] || confirmation.expiresAt < Date.now()) return send(message.chat.id, 'Это старое подтверждение. Доступ не изменён. Откройте /channels.');
         await backend('disconnectSocial', { ...actor, id });
-        return send(message.chat.id, 'Сохранённый API-доступ удалён из платформы. Канал и статистика остались. Само разрешение приложения можно отозвать в настройках соцсети.');
+        return send(message.chat.id, 'Сохранённый доступ удалён из платформы. Канал и статистика остались. Само разрешение приложения можно отозвать в настройках соцсети.');
       }
-      const result = await backend('channels', actor);
+      const result = await backend('channels', { ...actor, scope: 'own' });
       const channel = result.channels?.find((c) => c.id === id && String(c.creatorTelegramId) === actor.telegramUserId);
       if (!channel) return send(message.chat.id, 'Канал недоступен.');
       const nonce = randomBytes(8).toString('hex');
       remember(confirmations, actor.telegramUserId, { action: 'disconnect', id, nonce });
-      return send(message.chat.id, `Удалить сохранённый доступ к ${channel.url}? Статистика останется, но сбор закрытых данных остановится.`, keyboard([[{ text: 'Да, отключить API', callback_data: `social:confirm-disconnect:${id}:${nonce}` }], ...homeMenu.reply_markup.inline_keyboard]));
+      return send(message.chat.id, `Удалить сохранённый доступ к ${channel.url}? Статистика останется, но сбор закрытых данных остановится.`, keyboard([[{ text: 'Да, отключить доступ', callback_data: `social:confirm-disconnect:${id}:${nonce}` }], ...homeMenu.reply_markup.inline_keyboard]));
     }
     const channelAction = data.match(/^channel:(edit|delete|pause|resume|delete-confirm):([1-9]\d*)(?::([a-f0-9]{16}))?$/);
     if (channelAction) {
@@ -278,7 +407,7 @@ export function createTelegramBotFlow({ backend, send: deliver, answerCallback, 
         await backend('deleteChannel', { ...actor, id });
         return send(message.chat.id, 'Канал удалён из списка, сбор остановлен. При необходимости ссылку можно добавить снова.', keyboard([[{ text: 'Мои каналы', callback_data: 'menu:channels' }], ...homeMenu.reply_markup.inline_keyboard]));
       }
-      const result = await backend('channels', actor);
+      const result = await backend('channels', { ...actor, scope: 'own' });
       const channel = result.channels?.find((c) => c.id === id && String(c.creatorTelegramId) === actor.telegramUserId);
       if (!channel) return send(message.chat.id, 'Канал уже удалён или недоступен для редактирования. Откройте /channels.');
       if (channelAction[1] === 'edit') {
@@ -293,7 +422,7 @@ export function createTelegramBotFlow({ backend, send: deliver, answerCallback, 
         ]));
       }
       await backend('updateChannel', { ...actor, id, status: channelAction[1] === 'pause' ? 'inactive' : 'active' });
-      return channels(message.chat.id, actor);
+      return channels(message.chat.id, actor, 0, 'own', id);
     }
     if (data === 'menu:home') return showContext(message.chat.id, await backend('context', actor));
     if (data === 'menu:roles') {
@@ -303,16 +432,16 @@ export function createTelegramBotFlow({ backend, send: deliver, answerCallback, 
     if (data === 'menu:invite-help') return send(message.chat.id, 'Попросите продюсера открыть этого бота → «Я продюсер» → «Добавить креатора» и отправить вам полученную персональную ссылку.\n\nОткройте её и нажмите «Запустить», если Telegram предложит. Или просто скопируйте ссылку целиком и отправьте сюда. Обычная ссылка на бота без приглашения не подключает к команде.', invitationHelp);
     if (data === 'onboarding:resume') {
       const context = await backend('context', actor);
-      return showContext(message.chat.id, !context.binding && context.role === 'creator' && context.selectedType && context.pendingInvite?.status === 'valid'
+      return showContext(message.chat.id, !context.binding?.typeConfirmedAt && context.selectedType && ['creator', 'producer'].includes(context.role)
         ? await backend('selectType', { ...actor, type: context.selectedType }) : context);
     }
     if (data === 'menu:add-channel') {
       const context = await backend('context', actor);
-      return context.canSubmit ? send(message.chat.id, linkPrompt, platformsKeyboard()) : showContext(message.chat.id, context);
+      return context.canSubmit ? send(message.chat.id, 'Какая соцсеть?', platformsKeyboard()) : showContext(message.chat.id, context);
     }
-    const channelPage = data.match(/^channels:(\d{1,2})$/);
+    const channelPage = data.match(/^channels:(\d{1,5})$/);
     if (channelPage) return channels(message.chat.id, actor, Number(channelPage[1]));
-    const teamPage = data.match(/^team-channels:(\d{1,2})$/);
+    const teamPage = data.match(/^team-channels:(\d{1,5})$/);
     if (data === 'menu:team-channels' || teamPage) return channels(message.chat.id, actor, Number(teamPage?.[1] || 0), 'team');
     const role = data.match(/^role:(producer|creator)$/);
     if (role) {
@@ -340,8 +469,7 @@ export function createTelegramBotFlow({ backend, send: deliver, answerCallback, 
     const type = data.match(/^type:(AI|UGC)$/);
     if (type) {
       const context = await backend('context', actor);
-      if (context.role !== 'creator' || context.selectedType || context.binding?.typeConfirmedAt
-        || (!context.binding && context.pendingInvite?.status !== 'valid')) return showContext(message.chat.id, context);
+      if (!['creator', 'producer'].includes(context.role) || context.binding?.typeConfirmedAt) return showContext(message.chat.id, context);
       return showContext(message.chat.id, await backend('selectType', { ...actor, type: type[1] }));
     }
     const invitation = data.match(/^invite:(new|[1-9]\d*)$/);

@@ -2,17 +2,19 @@ import { env } from 'cloudflare:workers';
 import { telegramIdentity, requireTelegramCreatorReady, TelegramStorageError } from '@/db/telegram-onboarding';
 import { inspectAccess, parseCredentials, refreshAccess, verifyReadAccess, SocialApiError } from '@/lib/social-api.mjs';
 import { isTelegramAdmin } from '@/lib/server/telegram-admin';
+import { configuredOrigin } from '@/lib/social-oauth.mjs';
+import { metaConnectionIdentity } from '@/lib/meta-connection-identity.mjs';
 
 type Input = Record<string, unknown>;
-type Ticket = { tokenHash: string; channelId: number; creatorId: number; telegramUserId: string; expiresAt: string; consumed: number; url: string; platformName: string; providerChannelId: string | null };
+type Ticket = { tokenHash: string; channelId: number; creatorId: number; telegramUserId: string; expiresAt: string; consumed: number; url: string; platformName: string; providerChannelId: string | null; channelStatus: string };
 type Connection = { channelId: number; creatorId: number; accountId: string; ciphertext: string; updatedAt: string; expiresAt: string | null; refreshedAt: string | null; status: string };
 const db = () => env.DB;
 const hex = (bytes: Uint8Array) => Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 const fromHex = (value: string) => Uint8Array.from(value.match(/.{2}/g) || [], (b) => parseInt(b, 16));
 export const publicOrigin = () => {
-  const raw = Reflect.get(env, 'CONTENT_PUBLIC_ORIGIN');
-  if (typeof raw !== 'string' || !/^https:\/\/[^/]+$/.test(raw)) throw new TelegramStorageError('Публичный адрес формы не настроен администратором', 503);
-  return new URL(raw).origin;
+  const origin = configuredOrigin(env);
+  if (!origin) throw new TelegramStorageError('Публичный адрес формы не настроен администратором', 503);
+  return origin;
 };
 async function key() {
   const secret = Reflect.get(env, 'SOCIAL_VAULT_KEY');
@@ -65,7 +67,7 @@ export async function connectTicket(token: string, consumed = 0): Promise<Ticket
 }
 export async function connectTicketHash(tokenHash: string, consumed = 0): Promise<Ticket> {
   const row = await db().prepare(`SELECT t.token_hash AS tokenHash, t.channel_id AS channelId, t.creator_id AS creatorId,
-    t.telegram_user_id AS telegramUserId, a.role AS telegramRole, t.expires_at AS expiresAt, t.consumed, ch.url,
+    t.telegram_user_id AS telegramUserId, a.role AS telegramRole, t.expires_at AS expiresAt, t.consumed, ch.url, ch.status AS channelStatus,
     ch.provider_channel_id AS providerChannelId, pf.name AS platformName
     FROM social_connect_tickets t JOIN creator_channels ch ON ch.id = t.channel_id AND ch.creator_id = t.creator_id
     JOIN creators c ON c.id = ch.creator_id JOIN producers p ON p.id = c.producer_id
@@ -75,7 +77,7 @@ export async function connectTicketHash(tokenHash: string, consumed = 0): Promis
     WHERE t.token_hash = ? AND t.consumed = ? AND t.expires_at > ? AND ch.deleted_at IS NULL
       AND c.status = 'active' AND p.status = 'active' AND pf.status = 'active' AND l.type_confirmed_at IS NOT NULL`)
     .bind(tokenHash, consumed, new Date().toISOString()).first<Ticket & { telegramRole: string | null }>();
-  if (!row || (row.telegramRole !== 'creator' && !isTelegramAdmin(row.telegramUserId))) throw new TelegramStorageError('Ссылка истекла или уже использована. Получите новую через /channels в боте.', 410);
+  if (!row || (!['creator', 'producer'].includes(row.telegramRole || '') && !isTelegramAdmin(row.telegramUserId))) throw new TelegramStorageError('Ссылка истекла или уже использована. Получите новую через /channels в боте.', 410);
   return row;
 }
 export async function saveConnectTicket(token: string, input: Input) {
@@ -89,28 +91,43 @@ export async function saveConnectTicket(token: string, input: Input) {
   }
   const claim = await db().prepare('UPDATE social_connect_tickets SET consumed = 1 WHERE token_hash = ? AND consumed = 0').bind(ticket.tokenHash).run();
   if (claim.meta.changes !== 1) throw new TelegramStorageError('Ссылка уже использована', 410);
-  const identity = await inspectAccess(ticket, credentials);
-  if (!identity?.accountId) throw new SocialApiError('API не подтвердил владельца.');
+  let identity: Awaited<ReturnType<typeof inspectAccess>>;
   let expiresAt: string | null = null;
   let refreshedAt: string | null = null;
   try {
-    const refreshed = await refreshAccess(ticket.platformName, credentials, { expectedAccountId: identity.accountId,
-      tiktokClientKey: Reflect.get(env, 'TIKTOK_CLIENT_KEY'), tiktokClientSecret: Reflect.get(env, 'TIKTOK_CLIENT_SECRET'),
-      vkServiceToken: Reflect.get(env, 'VK_SERVICE_TOKEN'), vkClientId: Reflect.get(env, 'VK_CLIENT_ID') });
-    if (refreshed) { credentials = refreshed.credentials; expiresAt = refreshed.expiresAt; refreshedAt = new Date().toISOString(); }
-  } catch (error) {
-    if (['Instagram', 'Threads'].includes(ticket.platformName) && error instanceof SocialApiError && error.syncStatus === 'needs_auth') {
-      throw new TelegramStorageError(`${ticket.platformName} не подтвердил продление токена. Используйте «Войти через ${ticket.platformName}» либо действующий long-lived токен старше суток. Прежний доступ сохранён.`, 400);
+    identity = await inspectAccess(ticket, credentials);
+    if (!identity?.accountId) throw new SocialApiError('API не подтвердил владельца.');
+    // Check permissions before refreshing a token that may rotate on use.
+    await verifyReadAccess(ticket, credentials);
+    try {
+      const refreshed = await refreshAccess(ticket.platformName, credentials, { expectedAccountId: identity.accountId,
+        tiktokClientKey: Reflect.get(env, 'TIKTOK_CLIENT_KEY'), tiktokClientSecret: Reflect.get(env, 'TIKTOK_CLIENT_SECRET'),
+        vkServiceToken: Reflect.get(env, 'VK_SERVICE_TOKEN'), vkClientId: Reflect.get(env, 'VK_CLIENT_ID') });
+      if (refreshed) { credentials = refreshed.credentials; expiresAt = refreshed.expiresAt; refreshedAt = new Date().toISOString(); }
+    } catch (error) {
+      if (['Instagram', 'Threads'].includes(ticket.platformName) && error instanceof SocialApiError && error.syncStatus === 'needs_auth') {
+        throw new TelegramStorageError(`${ticket.platformName} не подтвердил продление токена. Используйте «Войти через ${ticket.platformName}» либо действующий long-lived токен старше суток. Прежний доступ сохранён.`, 400);
+      }
+      throw error;
     }
+  } catch (error) {
+    // An invalid credential must not strand the creator. Release only this manual
+    // attempt, without reviving an expired/replaced ticket or an OAuth session.
+    await db().prepare(`UPDATE social_connect_tickets SET consumed=0 WHERE token_hash=? AND consumed=1 AND expires_at>?
+      AND NOT EXISTS(SELECT 1 FROM social_oauth_sessions WHERE ticket_hash=?)`)
+      .bind(ticket.tokenHash, new Date().toISOString(), ticket.tokenHash).run();
     throw error;
   }
-  // Probe video permissions too; profile access alone is not enough for metrics.
-  await verifyReadAccess(ticket, credentials);
   return persistConnectedTicket(ticket.tokenHash, credentials, identity, expiresAt, refreshedAt);
 }
-export async function persistConnectedTicket(tokenHash: string, credentials: ReturnType<typeof parseCredentials>, identity: { accountId: string; username?: string }, expiresAt: string | null, refreshedAt: string | null, oauthStateHash?: string) {
+export async function persistConnectedTicket(tokenHash: string, credentials: ReturnType<typeof parseCredentials>, identity: { accountId: string; username?: string; profile?: { id?: unknown } }, expiresAt: string | null, refreshedAt: string | null, oauthStateHash?: string) {
   const ticket = await connectTicketHash(tokenHash, 1);
   const now = new Date().toISOString();
+  const meta = await metaConnectionIdentity(ticket.platformName, identity, env, oauthStateHash);
+  const authorizedAt = Math.floor(Date.now() / 1000);
+  // Ticket TTL bounds the start of this authorization. A callback received while
+  // OAuth was in flight must prevent the pre-revocation attempt from reviving it.
+  const startedAt = Math.floor(Date.parse(ticket.expiresAt) / 1000) - 600;
   const cipher = await encrypt(credentials, ticket.creatorId, ticket.channelId, identity.accountId);
   const results = await db().batch([
     db().prepare(`INSERT INTO social_connections(channel_id,creator_id,telegram_user_id,account_id,username,ciphertext,status,expires_at,refreshed_at,updated_at)
@@ -121,20 +138,34 @@ export async function persistConnectedTicket(tokenHash: string, credentials: Ret
       JOIN telegram_accounts a ON a.telegram_user_id=t.telegram_user_id
       JOIN telegram_creator_links l ON l.telegram_user_id=a.telegram_user_id AND l.creator_id=c.id
       WHERE t.token_hash=? AND t.consumed=1 AND t.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND ch.deleted_at IS NULL
-        AND c.status='active' AND p.status='active' AND pf.status='active' AND (a.role='creator' OR ?=1) AND l.type_confirmed_at IS NOT NULL
+        AND c.status='active' AND p.status='active' AND pf.status='active' AND (a.role IN ('creator','producer') OR ?=1) AND l.type_confirmed_at IS NOT NULL
         AND (? IS NULL OR EXISTS(SELECT 1 FROM social_oauth_sessions os WHERE os.state_hash=? AND os.ticket_hash=t.token_hash
           AND os.status='exchanging' AND os.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')))
+        AND (? IS NULL OR NOT EXISTS(SELECT 1 FROM meta_callback_receipts mr
+          WHERE mr.provider=? AND mr.app_id=? AND mr.subject_hash=? AND mr.issued_at>=?))
       ON CONFLICT(channel_id) DO UPDATE SET creator_id=excluded.creator_id,telegram_user_id=excluded.telegram_user_id,
       account_id=excluded.account_id,username=excluded.username,ciphertext=excluded.ciphertext,status='connected',expires_at=excluded.expires_at,refreshed_at=excluded.refreshed_at,updated_at=excluded.updated_at`)
-      .bind(identity.accountId, identity.username || identity.accountId, cipher, expiresAt, refreshedAt, now, ticket.tokenHash, Number(isTelegramAdmin(ticket.telegramUserId)), oauthStateHash || null, oauthStateHash || null),
+      .bind(identity.accountId, identity.username || identity.accountId, cipher, expiresAt, refreshedAt, now, ticket.tokenHash, Number(isTelegramAdmin(ticket.telegramUserId)), oauthStateHash || null, oauthStateHash || null, meta?.provider || null, meta?.provider || null, meta?.appId || null, meta?.subjectHash || null, startedAt),
     db().prepare(`UPDATE creator_channels SET sync_status='pending',sync_error=NULL,next_sync_at=?,lease_token=NULL,lease_until=NULL,updated_at=?
-      WHERE id=? AND deleted_at IS NULL AND EXISTS(SELECT 1 FROM social_connections WHERE channel_id=? AND updated_at=?)`)
+      WHERE id=? AND deleted_at IS NULL AND changes()=1 AND EXISTS(SELECT 1 FROM social_connections WHERE channel_id=? AND updated_at=?)`)
       .bind(now, now, ticket.channelId, ticket.channelId, now),
-    ...(oauthStateHash ? [db().prepare(`UPDATE social_oauth_sessions SET status='complete',ciphertext='',message='Доступ подключён. Первая проверка поставлена в очередь, затем обновляем ежедневно.'
-      WHERE state_hash=? AND status='exchanging' AND EXISTS(SELECT 1 FROM social_connections WHERE channel_id=? AND updated_at=?)`).bind(oauthStateHash, ticket.channelId, now)] : []),
+    ...(meta ? [db().prepare(`INSERT INTO meta_account_links(channel_id,creator_id,provider,app_id,subject_hash,authorized_at)
+      SELECT sc.channel_id,sc.creator_id,?,?,?,? FROM social_connections sc
+      WHERE sc.channel_id=? AND sc.updated_at=? AND changes()=1
+      ON CONFLICT(channel_id) DO UPDATE SET creator_id=excluded.creator_id,provider=excluded.provider,app_id=excluded.app_id,
+        subject_hash=excluded.subject_hash,authorized_at=excluded.authorized_at`)
+      .bind(meta.provider, meta.appId, meta.subjectHash, authorizedAt, ticket.channelId, now)]
+      : ['Instagram', 'Threads'].includes(ticket.platformName) ? [db().prepare(`DELETE FROM meta_account_links WHERE channel_id=? AND changes()=1
+        AND EXISTS(SELECT 1 FROM social_connections WHERE channel_id=? AND updated_at=?)`).bind(ticket.channelId, ticket.channelId, now)] : []),
+    ...(oauthStateHash ? [db().prepare(`UPDATE social_oauth_sessions SET status='complete',ciphertext='',message=CASE
+      WHEN EXISTS(SELECT 1 FROM social_connect_tickets t JOIN creator_channels ch ON ch.id=t.channel_id
+        WHERE t.token_hash=social_oauth_sessions.ticket_hash AND ch.status='inactive')
+      THEN 'Доступ подключён, но сбор приостановлен. Вернитесь в бот и нажмите «Возобновить сбор» у этого канала.'
+      ELSE 'Доступ подключён. Первая проверка поставлена в очередь, затем обновляем ежедневно.' END
+      WHERE state_hash=? AND status='exchanging' AND changes()=1 AND EXISTS(SELECT 1 FROM social_connections WHERE channel_id=? AND updated_at=?)`).bind(oauthStateHash, ticket.channelId, now)] : []),
   ]);
-  if (results[0].meta.changes !== 1 || (oauthStateHash && results[2].meta.changes !== 1)) throw new TelegramStorageError('Канал или попытка подключения изменены. Получите новую ссылку.', 409);
-  return { platformName: ticket.platformName, username: identity.username };
+  if (results[0].meta.changes !== 1 || (meta && results[2].meta.changes !== 1) || (oauthStateHash && results.at(-1)?.meta.changes !== 1)) throw new TelegramStorageError('Канал или попытка подключения изменены. Получите новую ссылку.', 409);
+  return { channelId: ticket.channelId, platformName: ticket.platformName, username: identity.username, channelStatus: ticket.channelStatus };
 }
 export async function disconnectSocial(input: Input) {
   const { channel } = await ownedChannel(input);

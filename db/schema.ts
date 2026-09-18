@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { check, index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import { check, index, integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 export const appMeta = sqliteTable('app_meta', {
   key: text('key').primaryKey(),
@@ -307,3 +307,44 @@ export const socialOauthSessions = sqliteTable('social_oauth_sessions', {
   message: text('message'),
   expiresAt: text('expires_at').notNull(),
 }, (table) => [uniqueIndex('idx_social_oauth_ticket').on(table.ticketHash), index('idx_social_oauth_expiry').on(table.expiresAt)]);
+
+export const telegramJourneyPlatforms = sqliteTable('telegram_journey_platforms', {
+  creatorId: integer('creator_id').notNull().references(() => creators.id, { onDelete: 'cascade' }),
+  platformName: text('platform_name').notNull(),
+  updatedAt: text('updated_at').notNull(),
+}, (table) => [primaryKey({ columns: [table.creatorId, table.platformName] })]);
+
+export const telegramChannelRechecks = sqliteTable('telegram_channel_rechecks', {
+  channelId: integer('channel_id').primaryKey().references(() => creatorChannels.id, { onDelete: 'cascade' }),
+  requestedAt: text('requested_at').notNull(),
+});
+
+
+// Provider callbacks map only an identity verified through this service's OAuth.
+export const metaAccountLinks = sqliteTable('meta_account_links', {
+  channelId: integer('channel_id').primaryKey().references(() => creatorChannels.id, { onDelete: 'cascade' }),
+  creatorId: integer('creator_id').notNull().references(() => creators.id),
+  provider: text('provider').notNull(),
+  appId: text('app_id').notNull(),
+  subjectHash: text('subject_hash').notNull(),
+  authorizedAt: integer('authorized_at').notNull(),
+}, (table) => [index('idx_meta_subject').on(table.provider, table.appId, table.subjectHash),
+  check('chk_meta_provider', sql`${table.provider} IN ('instagram','threads')`),
+  check('chk_meta_authorized_at', sql`${table.authorizedAt} > 0`)]);
+
+export const metaCallbackReceipts = sqliteTable('meta_callback_receipts', {
+  eventHash: text('event_hash').primaryKey(),
+  confirmationCode: text('confirmation_code').notNull().unique(),
+  provider: text('provider').notNull(),
+  appId: text('app_id').notNull(),
+  subjectHash: text('subject_hash').notNull(),
+  issuedAt: integer('issued_at').notNull(),
+  kind: text('kind').notNull(),
+  status: text('status').notNull(),
+  affectedChannels: integer('affected_channels').notNull().default(0),
+  targetIds: text('target_ids'),
+  processedAt: text('processed_at').notNull(),
+}, (table) => [index('idx_meta_callback_subject').on(table.provider, table.appId, table.subjectHash, table.issuedAt),
+  check('chk_meta_receipt_provider', sql`${table.provider} IN ('instagram','threads')`),
+  check('chk_meta_receipt_kind', sql`${table.kind} IN ('deauthorize','data-deletion')`),
+  check('chk_meta_receipt_status', sql`${table.status} IN ('processing','operational_deleted','deauthorized','no_matching_data','newer_connection_preserved')`)]);

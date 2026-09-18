@@ -6,19 +6,20 @@ import { channelSyncHelp } from '../lib/channel-sync-help.mjs';
 
 test('channel status explains Instagram access without asking for passwords; partial metrics are explicit', async () => {
   const sent = [];
-  const flow = createTelegramBotFlow({ backend: async () => ({ channels: [
-    { platformName: 'Instagram', url: 'https://instagram.com/fixture', syncStatus: 'needs_auth', totalViews: null, publicationCount: null, totalLikes: null },
-    { platformName: 'RuTube', url: 'https://rutube.ru/channel/123', syncStatus: 'success', totalViews: 440, publicationCount: 6, totalLikes: null },
-    { platformName: 'RuTube', url: 'https://rutube.ru/channel/456', syncStatus: 'success', totalViews: 0, publicationCount: 0, totalLikes: 0 },
-  ] }), send: async (_, text) => sent.push(text), answerCallback: async () => {}, processLink: async () => {}, botUsername: () => 'fixture' });
-  await flow.handleMessage({ update_id: 1, message: { from: { id: 2001 }, chat: { id: 2001, type: 'private' }, text: '/channels' } });
-  assert.match(sent[0], /Канал сохранён/);
-  assert.match(sent[0], /Подключить API/);
-  assert.match(sent[0], /Пароли.*не отправляйте/);
-  assert.match(sent[1], /Ролики: 6/);
-  assert.match(sent[1], /обновлено частично/);
-  assert.match(sent[2], /Лайки: 0/);
-  assert.doesNotMatch(sent[2], /частично/);
+  const items = [
+    { id: 1, platformName: 'Instagram', url: 'https://instagram.com/fixture', syncStatus: 'needs_auth', totalViews: null, publicationCount: null, totalLikes: null },
+    { id: 2, platformName: 'RuTube', url: 'https://rutube.ru/channel/123', syncStatus: 'success', totalViews: 440, publicationCount: 6, totalLikes: null },
+    { id: 3, platformName: 'RuTube', url: 'https://rutube.ru/channel/456', syncStatus: 'success', totalViews: 0, publicationCount: 0, totalLikes: 0 },
+  ].map((c) => ({ ...c, status: 'active', creatorTelegramId: '2001' }));
+  const flow = createTelegramBotFlow({ backend: async (action) => action === 'context' ? { canSubmit: true } : { channels: items },
+    send: async (_, text, extra) => sent.push({ text, extra }), answerCallback: async () => {}, processLink: async () => {}, botUsername: () => 'fixture' });
+  for (const id of [1, 2, 3]) await flow.handleCallback({ update_id: id, callback_query: { id: String(id), from: { id: 2001 }, message: { chat: { id: 2001, type: 'private' } }, data: `channel:show:${id}` } });
+  assert.match(sent[0].text, /нужно подключить доступ/);
+  assert.ok(sent[0].extra.reply_markup.inline_keyboard.flat().some((b) => b.callback_data === 'social:connect:1'));
+  assert.match(sent[1].text, /Ролики: 6/);
+  assert.match(sent[1].text, /лайки недоступны/);
+  assert.match(sent[2].text, /Лайки: 0/);
+  assert.match(sent[2].text, /показатели получены/);
   assert.equal(channelSyncHelp('Instagram', 'success'), null);
   assert.doesNotMatch(channelSyncHelp('VK', 'needs_auth'), /Instagram/);
 });
@@ -43,25 +44,26 @@ test('full bot conversation: producer, personal invitation, AI creator, link, ch
   let update = 0;
   const message = (id, text) => flow.handleMessage({ update_id: ++update, message: { from: { id, first_name: 'Name' }, chat: { id, type: 'private' }, text } });
   const callback = (id, data) => flow.handleCallback({ update_id: ++update, callback_query: { id: String(update), from: { id, first_name: 'Name' }, message: { chat: { id, type: 'private' } }, data } });
-  await message(1001, '/start'); assert.match(sent.at(-1).text, /Выберите свою роль/);
+  await message(1001, '/start'); assert.match(sent.at(-1).text, /Кто вы/);
   await callback(1001, 'role:producer');
+  await callback(1001, 'type:UGC');
   await callback(1001, 'invite:new');
   const token = sent.at(-1).text.match(/start=(c_[a-f0-9]+)/)[1];
   await message(2001, `/start ${token}`); assert.match(sent.at(-1).text, /один раз/);
   await message(2001, 'https://youtube.com/@fixture'); assert.equal(links.length, 0);
-  await callback(2001, 'type:AI'); assert.match(sent.at(-1).text, /раз в сутки/);
+  await callback(2001, 'type:AI'); assert.ok(sent.at(-1).extra.reply_markup.inline_keyboard.flat().some((b) => b.callback_data === 'menu:add-channel'));
   await message(2001, 'https://youtube.com/@fixture'); assert.equal(links.length, 1);
-  await message(2001, '/channels'); assert.match(sent.at(-2).text, /Telegram ID 1001/); assert.match(sent.at(-2).text, /Telegram ID 2001/);
-  assert.match(sent.at(-2).text, /Просмотры:.*\nРолики:.*\nЛайки:/);
+  await message(2001, '/channels');
+  assert.match(sent.at(-1).text, /Просмотры:.*\nРолики:.*\nЛайки:/);
   assert.ok(sent.at(-1).extra.reply_markup.inline_keyboard.length);
   await message(1001, '/creators'); assert.match(sent.at(-1).text, /каналов: 1/);
-  assert.ok(sent.at(-1).extra.reply_markup.inline_keyboard.some((row) => row.some((b) => b.callback_data === 'menu:home')));
-  await message(1001, 'https://youtube.com/@other'); assert.equal(links.length, 1);
-  assert.match(sent.at(-1).text, /Каналы добавляет сам креатор/);
+  assert.ok(sent.at(-1).extra.reply_markup.inline_keyboard.some((row) => row.some((b) => b.callback_data === 'menu:team')));
+  await message(1001, 'https://youtube.com/@other'); assert.equal(links.length, 2);
+  assert.match(sent.at(-1).text, /подключить YouTube через Google/);
   await message(2001, 'https://youtube.com/@first https://youtube.com/@second');
-  assert.equal(links.length, 3);
-  assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM creator_channels').get().n, 3);
-  assert.match(sent.at(-1).text, /Список обработан/);
+  assert.equal(links.length, 4);
+  assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM creator_channels').get().n, 4);
+  assert.match(sent.at(-1).text, /подключить YouTube через Google/);
   await callback(2001, 'role:producer');
   assert.equal((await backend('context', { telegramUserId: '2001' })).role, 'creator');
   assert.match(sent.at(-1).text, /Переключиться/);
@@ -69,24 +71,24 @@ test('full bot conversation: producer, personal invitation, AI creator, link, ch
   await callback(2001, 'type:UGC');
   assert.equal((await backend('context', { telegramUserId: '2001' })).role, 'producer');
   await callback(2001, 'role:creator');
-  await callback(2001, sent.at(-1).extra.reply_markup.inline_keyboard[0][0].callback_data); assert.match(sent.at(-1).text, /ИИ-контент/);
+  await callback(2001, sent.at(-1).extra.reply_markup.inline_keyboard[0][0].callback_data); assert.match(sent.at(-1).text, /ИИ/);
   await callback(2001, 'bind:999'); assert.match(sent.at(-1).text, /устарела/);
   const before = sent.length;
   await flow.handleMessage({ update_id: ++update, message: { from: { id: 2001 }, chat: { id: -100, type: 'group' }, text: '/start' } });
   assert.equal(sent.length, before);
 });
 
-test('creator onboarding without invite gives guidance and navigation; own invite never switches producer role', async (t) => {
+test('creator onboarding without invite reaches content type; own invite never switches producer role', async (t) => {
   const h = storageHarness(); t.after(h.close);
   const f = h.load('db/telegram-onboarding.ts');
   const sent = [];
   const flow = createTelegramBotFlow({ backend: async (action, data) => action === 'role' ? f.selectTelegramRole(data) : f.getTelegramContext(data),
     send: async (_, text, extra) => sent.push({ text, extra }), answerCallback: async () => {}, processLink: async () => {}, botUsername: () => 'fixture' });
   await flow.handleCallback({ update_id: 1, callback_query: { id: '1', from: { id: 2001 }, message: { chat: { id: 2001, type: 'private' } }, data: 'role:creator' } });
-  assert.match(sent.at(-1).text, /личную ссылку/);
-  assert.ok(sent.at(-1).extra.reply_markup.inline_keyboard.length >= 2);
+  assert.match(sent.at(-1).text, /контент/);
+  assert.ok(sent.at(-1).extra.reply_markup.inline_keyboard.flat().length === 2);
   assert.equal((await f.getTelegramContext({ telegramUserId: '2001' })).selectedType, null);
-  await assert.rejects(f.selectTelegramCreatorType({ telegramUserId: '2001', type: 'AI' }), /приглашение/);
+  assert.equal((await f.selectTelegramCreatorType({ telegramUserId: '2001', type: 'AI' })).canSubmit, true);
   await f.selectTelegramRole({ telegramUserId: '1001', role: 'producer' });
   const invite = await f.createTelegramInvite({ telegramUserId: '1001', updateId: 1 });
   const context = await f.acceptTelegramInvite({ telegramUserId: '1001', token: invite.token });

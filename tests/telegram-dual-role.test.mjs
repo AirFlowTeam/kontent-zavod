@@ -59,13 +59,17 @@ test('own channels stay separate from 50+ team channels, including when own crea
   assert.notEqual((await storage.getDashboardData()).telegramAccounts.find((a) => a.telegramUserId === adminId).stage, 'Продюсер и креатор');
 });
 
-test('ordinary users remain role-restricted; client flags cannot enable dual capability or claim another team', async (t) => {
-  const { flow, actor, submit } = await setup(t, { userId: '2001' });
+test('ordinary producers can submit only their own channels; client flags cannot grant administration or another team', async (t) => {
+  const { h, flow, actor, submit, context } = await setup(t, { userId: '2001' });
   const spoof = { ...actor, dualRole: true, canProduce: true, isAdmin: true };
   assert.equal((await flow.getTelegramContext(spoof)).dualRole, false);
-  assert.equal((await flow.getTelegramContext(spoof)).canSubmit, false);
-  await assert.rejects(submit({ ...spoof, updateId: 200, sourceKind: 'channel', channelUrl: 'https://youtube.com/@not-ready' }));
-  await assert.rejects(flow.listTelegramChannels({ ...spoof, scope: 'own' }));
+  assert.equal((await flow.getTelegramContext(spoof)).canSubmit, true);
+  const own = await submit({ ...spoof, updateId: 200, sourceKind: 'channel', channelUrl: 'https://youtube.com/@own-ready' });
+  assert.equal(own.creatorId, context.binding.id);
+  assert.deepEqual((await flow.listTelegramChannels({ ...spoof, scope: 'own' })).map(c => c.id), [own.id]);
+  for (const action of ['adminRead', 'adminManageChannel', 'adminInvite']) {
+    await assert.rejects(h.load('db/telegram-admin.ts').telegramAdminAction({ ...spoof, action, id: own.id, operation: 'pause' }), /администратору/);
+  }
   await flow.selectTelegramRole({ ...actor, role: 'creator' });
   await assert.rejects(flow.createTelegramInvite({ ...spoof, updateId: 300 }));
   await assert.rejects(flow.listTelegramChannels({ ...spoof, scope: 'team' }));
@@ -89,14 +93,21 @@ test('own API ticket survives role changes and persists encrypted credentials in
   assert.equal(h.sqlite.prepare('SELECT count(*) n FROM social_connections').get().n, 0);
 });
 
-test('revoked admin capability disables producer-mode creator writes and outstanding API tickets', async (t) => {
+test('revoked admin capability removes administration while preserving ordinary own-channel and API access', async (t) => {
   const { h, flow, storage, actor, context, vault, submit } = await setup(t);
   const id = await storage.createChannel({ creatorId: context.binding.id, url: 'https://youtube.com/@revoke' });
   const token = (await vault.createConnectTicket({ ...actor, id })).url.split('/').at(-1);
   h.env.TELEGRAM_ADMIN_USER_IDS = '';
-  assert.equal((await flow.getTelegramContext(actor)).canSubmit, false);
-  await assert.rejects(vault.connectTicket(token), /истекла/);
-  await assert.rejects(submit({ ...actor, updateId: 100, sourceKind: 'channel', channelUrl: 'https://youtube.com/@revoked-write' }));
+  assert.equal((await flow.getTelegramContext(actor)).canSubmit, true);
+  assert.equal((await flow.getTelegramContext(actor)).dualRole, false);
+  const ticket = await vault.connectTicket(token);
+  assert.equal(ticket.creatorId, context.binding.id);
+  h.sqlite.prepare('UPDATE social_connect_tickets SET consumed=1 WHERE token_hash=?').run(ticket.tokenHash);
+  await vault.persistConnectedTicket(ticket.tokenHash, { accessToken: 'fixture-personal-token' }, { accountId: 'fixture-account' }, null, null);
+  assert.equal((await submit({ ...actor, updateId: 100, sourceKind: 'channel', channelUrl: 'https://youtube.com/@ordinary-own-write' })).creatorId, context.binding.id);
+  for (const action of ['adminRead', 'adminManageChannel', 'adminInvite']) {
+    await assert.rejects(h.load('db/telegram-admin.ts').telegramAdminAction({ ...actor, action, id, operation: 'pause' }), /администратору/);
+  }
 });
 
 test('atomic channel and API writes still reject a creator link removed during the request', async (t) => {
@@ -136,11 +147,11 @@ test('bot personal menu combines both roles; own API, team scopes and stale role
   const callback = (data) => bot.handleCallback({ update_id: ++sequence, callback_query: { id: String(sequence), from, message: { chat }, data } });
   for (const data of ['admin:personal', 'role:creator', 'role:producer', 'menu:roles']) {
     await callback(data);
-    assert.match(sent.at(-1).text, /продюсер и креатор одновременно/);
+    assert.match(sent.at(-1).text, /Продюсер · UGC/);
     const buttons = sent.at(-1).extra.reply_markup.inline_keyboard.flat().map((b) => b.callback_data);
-    for (const expected of ['invite:new', 'menu:creators', 'menu:team-channels', 'menu:channels', 'menu:connections']) assert.ok(buttons.includes(expected));
+    for (const expected of ['menu:add-channel', 'menu:channels', 'menu:team']) assert.ok(buttons.includes(expected));
   }
-  await message('/role'); assert.match(sent.at(-1).text, /Переключать роль не нужно/);
+  await message('/role'); assert.match(sent.at(-1).text, /Продюсер · UGC/);
   assert.equal(calls.some((c) => c.action === 'role'), false);
   await message('/api'); assert.equal(calls.filter((c) => c.action === 'channels').at(-1).fields.scope, 'own');
   assert.ok(JSON.stringify(sent.at(-1)).includes(`social:connect:${id}`));
@@ -150,15 +161,15 @@ test('bot personal menu combines both roles; own API, team scopes and stale role
   h.sqlite.prepare('UPDATE telegram_creator_links SET type_confirmed_at=NULL WHERE telegram_user_id=?').run(adminId);
   h.sqlite.prepare('UPDATE telegram_accounts SET selected_type=NULL WHERE telegram_user_id=?').run(adminId);
   await message('/profile');
-  assert.match(sent.at(-1).text, /подтвердите тип/);
-  assert.ok(JSON.stringify(sent.at(-1)).includes('admin:type:UGC'));
-  await callback('admin:type:UGC');
-  assert.match(sent.at(-1).text, /продюсер и креатор одновременно/);
-  await callback('admin:type:AI');
-  assert.match(sent.at(-1).text, /Тип контента: UGC/);
+  assert.match(sent.at(-1).text, /контент/);
+  assert.ok(JSON.stringify(sent.at(-1)).includes('type:UGC'));
+  await callback('type:UGC');
+  assert.match(sent.at(-1).text, /Продюсер · UGC/);
+  await callback('type:AI');
+  assert.match(sent.at(-1).text, /UGC/);
   assert.equal(h.sqlite.prepare('SELECT count(*) n FROM creators').get().n, 1);
   h.sqlite.prepare("UPDATE creators SET status='inactive' WHERE id=?").run(context.binding.id);
   await message('/profile');
-  assert.match(sent.at(-1).text, /Профиль креатора или его продюсер отключён/);
+  assert.match(sent.at(-1).text, /Профиль отключён/);
   assert.ok(!JSON.stringify(sent.at(-1)).includes('admin:mode:creator'));
 });

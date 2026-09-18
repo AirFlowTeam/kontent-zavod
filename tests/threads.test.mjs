@@ -12,7 +12,7 @@ const config = { CONTENT_PUBLIC_ORIGIN: 'https://fixture.example', SOCIAL_VAULT_
 function fixture({ missing = false, wrong = false, loop = false, denied = false, empty = false } = {}) {
   return async (url, init = {}) => {
     const u = new URL(url); assert.equal(u.origin, 'https://graph.threads.com');
-    assert.equal(init.redirect, 'error');
+    assert.equal(init.redirect, 'manual');
     if (u.pathname === '/oauth/access_token') {
       assert.equal(init.body.get('client_id'), '123');
       assert.equal(init.body.get('redirect_uri'), 'https://fixture.example/connect/oauth/threads/callback');
@@ -83,7 +83,7 @@ test('Threads totals deduplicate full pages, carousel is one post, repost exclud
   assert.ok((await refreshAccess('Threads', credentials, { fetchImpl: fixture() })).expiresAt);
 });
 
-test('creator-only Threads OAuth → vault → collector → dashboard, alias duplicate and role guard', async (t) => {
+test('owner-only Threads OAuth → vault → collector → dashboard, alias duplicate and role transition', async (t) => {
   const h = storageHarness(); t.after(h.close); Object.assign(h.env, config);
   const { flow } = await onboard(h);
   const submit = h.load('db/telegram.ts').submitTelegramChannel;
@@ -109,5 +109,6 @@ test('creator-only Threads OAuth → vault → collector → dashboard, alias du
   assert.equal(dashboard.channels.find((c) => c.id === created.id).platformName, 'Threads');
   assert.ok(!JSON.stringify(dashboard).includes(credentials.accessToken));
   await flow.selectTelegramRole({ telegramUserId: '2001', role: 'producer' });
-  await assert.rejects(vault.createConnectTicket({ telegramUserId: '2001', id: created.id }));
+  assert.ok((await vault.createConnectTicket({ telegramUserId: '2001', id: created.id })).url);
+  await assert.rejects(vault.createConnectTicket({ telegramUserId: '1001', id: created.id }));
 });

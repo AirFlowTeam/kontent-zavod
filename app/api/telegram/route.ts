@@ -9,6 +9,7 @@ import { ChannelStorageError } from '@/db/storage';
 import { createConnectTicket, disconnectSocial } from '@/db/social-connections';
 import { telegramAdminAction } from '@/db/telegram-admin';
 import { isTelegramAdmin } from '@/lib/server/telegram-admin';
+import { getTelegramJourney, setTelegramJourneyPlatform, recheckTelegramChannel } from '@/db/telegram-journey';
 
 export const dynamic = 'force-dynamic';
 
@@ -67,6 +68,9 @@ export async function POST(request: Request) {
     if (action === 'acceptInvite') return json({ ok: true, ...await acceptTelegramInvite(body) });
     if (action === 'selectType') return json({ ok: true, ...await selectTelegramCreatorType(body) });
     if (action === 'channels') return json({ ok: true, channels: await listTelegramChannels(body) });
+    if (action === 'journey') return json({ ok: true, ...await getTelegramJourney(body) });
+    if (action === 'setJourneyPlatform') return json({ ok: true, ...await setTelegramJourneyPlatform(body) });
+    if (action === 'recheckChannel') return json({ ok: true, ...await recheckTelegramChannel(body) });
     if (action === 'connectSocial') return json({ ok: true, connection: await createConnectTicket(body) });
     if (action === 'disconnectSocial') return json({ ok: true, ...await disconnectSocial(body) });
     if (action === 'updateChannel' || action === 'deleteChannel') return json({ ok: true, id: await manageTelegramChannel(body) });

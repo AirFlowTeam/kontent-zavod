@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { collectAuthorized, inspectAccess, refreshAccess, SocialApiError } from '../lib/social-api.mjs';
+import { collectAuthorized, inspectAccess, refreshAccess, verifyReadAccess, SocialApiError } from '../lib/social-api.mjs';
 import { classifyProviderError } from '../scripts/channel-parser-lib.mjs';
 const credentials = { accessToken: 'fixture-access-token', refreshToken: 'fixture-refresh-token', clientId: '123', deviceId: 'device' };
 const response = (data, status = 200) => Response.json(data, { status });
@@ -77,6 +77,59 @@ test('provider errors do not leak credentials; quotas are retryable, not needs_a
   for (const body of [{ error: { error_code: 6, request_params: credentials } }, { error: { errors: [{ reason: 'quotaExceeded' }], message: credentials.accessToken } }]) {
     await assert.rejects(inspectAccess({ platformName: 'YouTube', url: 'https://youtube.com/@alice' }, credentials, { fetchImpl: async () => response(body, 403) }), (e) => {
       assert.ok(e instanceof SocialApiError); assert.equal(classifyProviderError(e), 'error'); assert.ok(!e.message.includes(credentials.accessToken)); return true;
+    });
+  }
+});
+
+test('VK authorized stats include profile followers and community members', async () => {
+  for (const group of [false, true]) {
+    const result = await collectAuthorized({ platformName: 'VK', url: `https://vk.com/${group ? 'club456' : 'id123'}` }, { credentials }, { fetchImpl: async (url, init) => {
+      const method = new URL(url).pathname.split('/').at(-1), body = new URLSearchParams(init.body);
+      if (method === 'users.get') {
+        assert.match(body.get('fields'), /followers_count/);
+        return response({ response: [{ id: 123, followers_count: 42, first_name: 'Alice', last_name: 'Creator' }] });
+      }
+      if (method === 'groups.getById') {
+        assert.match(body.get('fields'), /members_count/);
+        return response({ response: { groups: [{ id: 456, is_admin: 1, members_count: 97, name: 'Alice videos' }] } });
+      }
+      return response({ response: { count: 0, items: [] } });
+    } });
+    assert.equal(result.followers, group ? 97 : 42);
+    assert.equal(result.title, group ? 'Alice videos' : 'Alice Creator');
+    assert.equal(result.totalViews, 0);
+  }
+});
+
+test('YouTube permission probe checks uploads and video stats; empty channels remain valid', async () => {
+  const channel = { platformName: 'YouTube', url: 'https://youtube.com/@alice' }, id = 'UC1234567890123456789012';
+  const calls = [];
+  const fetchImpl = async (url) => {
+    const method = new URL(url).pathname.split('/').at(-1); calls.push(method);
+    if (method === 'channels') return response({ items: [{ id, statistics: { videoCount: '1' }, contentDetails: { relatedPlaylists: { uploads: 'uploads' } } }] });
+    if (method === 'playlistItems') return response({ items: [{ contentDetails: { videoId: 'v1' } }] });
+    return response({ error: { errors: [{ reason: 'accessNotConfigured' }] } }, 403);
+  };
+  await assert.rejects(verifyReadAccess(channel, credentials, { fetchImpl }), /YouTube Data API v3 выключен/);
+  assert.deepEqual(calls, ['channels', 'playlistItems', 'videos']);
+  const empty = async () => response({ items: [{ id, statistics: { videoCount: '0', viewCount: '0', subscriberCount: '0' } }] });
+  await verifyReadAccess(channel, credentials, { fetchImpl: empty });
+  const result = await collectAuthorized(channel, { credentials }, { fetchImpl: empty });
+  assert.equal(result.publicationCount, 0); assert.equal(result.totalLikes, 0); assert.equal(result.followers, 0);
+});
+
+test('provider errors return specific safe recovery actions instead of raw provider messages', async () => {
+  const cases = [
+    ['YouTube', 'https://youtube.com/@alice', { error: { errors: [{ reason: 'accessNotConfigured' }] } }, /Library/],
+    ['YouTube', 'https://youtube.com/@alice', { error: { details: [{ reason: 'API_KEY_HTTP_REFERRER_BLOCKED' }] } }, /IP сервера/],
+    ['TikTok', 'https://tiktok.com/@alice', { error: { code: 'scope_not_authorized' } }, /video.list/],
+    ['VK', 'https://vk.com/id123', { error: { error_code: 7 } }, /правом video/],
+    ['Instagram', 'https://instagram.com/alice', { error: { code: 190 } }, /instagram_business_manage_insights/],
+  ];
+  for (const [platformName, url, body, expected] of cases) {
+    body.error.message = credentials.accessToken;
+    await assert.rejects(inspectAccess({ platformName, url }, credentials, { fetchImpl: async () => response(body, 403) }), (error) => {
+      assert.match(error.message, expected); assert.ok(!error.message.includes(credentials.accessToken)); assert.equal(error.syncStatus, 'needs_auth'); return true;
     });
   }
 });

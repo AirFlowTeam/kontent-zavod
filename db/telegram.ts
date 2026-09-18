@@ -118,7 +118,7 @@ const readyWriter = `EXISTS(SELECT 1 FROM telegram_creator_links l
   JOIN telegram_accounts a ON a.telegram_user_id=l.telegram_user_id
   JOIN creators c ON c.id=l.creator_id JOIN producers p ON p.id=c.producer_id
   JOIN telegram_producer_links pl ON pl.producer_id=p.id
-  WHERE l.telegram_user_id=? AND c.id=? AND (a.role='creator' OR ?=1)
+  WHERE l.telegram_user_id=? AND c.id=? AND (a.role IN ('creator','producer') OR ?=1)
     AND l.type_confirmed_at IS NOT NULL AND c.status='active' AND p.status='active')`;
 
 async function findSubmission(binding: D1Database, id: number, itemIndex: number) {

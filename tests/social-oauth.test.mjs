@@ -13,7 +13,7 @@ const json = (data, status = 200) => Response.json(data, { status });
 function igFetch(username = 'alice') {
   return async (url, init) => {
     const u = new URL(url);
-    assert.equal(init.redirect, 'error');
+    assert.equal(init.redirect, 'manual');
     if (u.hostname === 'api.instagram.com') {
       assert.ok(init.body instanceof FormData);
       assert.equal(init.body.get('client_id'), '123');
@@ -38,7 +38,18 @@ async function setup(t) {
 }
 const secretOf = (start) => start.cookie.split(';')[0].split('=')[1];
 
-test('OAuth exact redirect/config readiness and PKCE RFC7636 vector; no config secrets in DTO', async () => {
+await test('server key does not bypass the YouTube OAuth application configuration', () => {
+  const key = 'fixture-private-shared-youtube-key';
+  const result = integrationStatus({ YOUTUBE_API_KEY: key });
+  const youtube = result.find((item) => item.id === 'youtube');
+  assert.equal(youtube.ready, false); assert.equal(youtube.sharedKeyConfigured, false);
+  assert.deepEqual(youtube.missing, ['YOUTUBE_CLIENT_ID', 'YOUTUBE_CLIENT_SECRET', 'CONTENT_PUBLIC_ORIGIN', 'SOCIAL_VAULT_KEY']); assert.ok(!JSON.stringify(result).includes(key));
+  assert.equal(integrationStatus(config).find((item) => item.id === 'youtube').sharedKeyConfigured, false);
+  assert.equal(integrationStatus({ YOUTUBE_API_KEY: '  ' }).find((item) => item.id === 'youtube').ready, false);
+  assert.equal(result.find((item) => item.id === 'instagram').ready, false);
+});
+
+await test('OAuth exact redirect/config readiness and PKCE RFC7636 vector; no config secrets in DTO', async () => {
   assert.equal(await pkceChallenge('dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk'), 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM');
   const vk = new URL(await authorizationUrl('vk', config, 'a'.repeat(64), 'b'.repeat(64)));
   assert.equal(vk.origin, 'https://id.vk.ru'); assert.equal(vk.searchParams.get('code_challenge_method'), 'S256');
@@ -51,7 +62,7 @@ test('OAuth exact redirect/config readiness and PKCE RFC7636 vector; no config s
   assert.ok(!integrationStatus({ ...config, CONTENT_PUBLIC_ORIGIN: 'https://user:pass@fixture.example' })[0].ready);
 });
 
-test('VK payload supported, mixed/conflicting/repeated/state-less callback rejected', () => {
+await test('VK payload supported, mixed/conflicting/repeated/state-less callback rejected', () => {
   const state = 'a'.repeat(64);
   const url = `https://fixture.example/cb?${new URLSearchParams({ payload: JSON.stringify({ type: 'code_v2', state, code: 'code', device_id: 'device' }) })}`;
   assert.equal(callbackParams('vk', url).device_id, 'device');
@@ -61,13 +72,13 @@ test('VK payload supported, mixed/conflicting/repeated/state-less callback rejec
   assert.throws(() => callbackParams('instagram', 'https://fixture.example/cb?code=abc'), /Состояние/);
 });
 
-test('IG exchange requires permissions, converts nested short token and validates long expiry', async () => {
+await test('IG exchange requires permissions, converts nested short token and validates long expiry', async () => {
   const result = await exchangeCode('instagram', config, { code: 'fixture-code', state: 'a'.repeat(64) }, '', { fetchImpl: igFetch() });
   assert.equal(result.credentials.accessToken, 'fixture-long-lived'); assert.equal(result.accountId, '4242');
   await assert.rejects(exchangeCode('instagram', config, { code: 'fixture-code' }, '', { fetchImpl: async () => json({ data: [{ access_token: 'secret-in-error', user_id: 42, permissions: ['instagram_business_basic'] }] }) }), (e) => /разрешения/.test(e.message) && !e.message.includes('secret-in-error'));
 });
 
-test('TT requires granted video.list and refresh; VK sends confidential service token and verifier', async () => {
+await test('TT requires granted video.list and refresh; VK sends confidential service token and verifier', async () => {
   const args = { state: 'a'.repeat(64), code: 'fixture-code', device_id: 'fixture-device' };
   await assert.rejects(exchangeCode('tiktok', config, args, '', { fetchImpl: async () => json({ access_token: 'fixture-access', refresh_token: 'fixture-refresh', open_id: 'open1', expires_in: 86400, scope: 'user.info.basic,user.info.stats,user.info.profile' }) }), /разрешения/);
   const tt = await exchangeCode('tiktok', config, args, '', { fetchImpl: async () => json({ access_token: 'fixture-access', refresh_token: 'fixture-refresh', open_id: 'open1', expires_in: 86400, scope: 'user.info.basic,user.info.stats,user.info.profile,video.list' }) });
@@ -79,7 +90,7 @@ test('TT requires granted video.list and refresh; VK sends confidential service 
   assert.equal(vk.credentials.clientId, config.VK_CLIENT_ID); assert.equal(vk.credentials.deviceId, args.device_id);
 });
 
-test('complete OAuth → encrypted save → claim → full API aggregate; repeat callback and result safe', async (t) => {
+await test('complete OAuth → encrypted save → claim → full API aggregate; repeat callback and result safe', async (t) => {
   const { h, storage, vault, oauth, token, id } = await setup(t);
   const start = await oauth.startOAuth(token); const secret = secretOf(start);
   assert.match(start.cookie, /HttpOnly; Secure; SameSite=Lax/);
@@ -93,7 +104,7 @@ test('complete OAuth → encrypted save → claim → full API aggregate; repeat
   assert.equal(h.sqlite.prepare('SELECT ciphertext FROM social_oauth_sessions').get().ciphertext, '');
 });
 
-test('wrong browser/provider/expired state cannot consume or attach a connection', async (t) => {
+await test('wrong browser/provider/expired state cannot consume or attach a connection', async (t) => {
   const { h, oauth, token } = await setup(t); const start = await oauth.startOAuth(token);
   await assert.rejects(oauth.finishOAuth('instagram', { state: start.state, code: 'code' }, 'b'.repeat(64)), /истекла/);
   await assert.rejects(oauth.finishOAuth('tiktok', { state: start.state, code: 'code' }, secretOf(start)), /совпадает/);
@@ -103,7 +114,7 @@ test('wrong browser/provider/expired state cannot consume or attach a connection
   assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM social_connections').get().n, 0);
 });
 
-test('cancel, new bot ticket and delete prevent later callback; duplicate Start preserves first attempt', async (t) => {
+await test('cancel, new bot ticket and delete prevent later callback; duplicate Start preserves first attempt', async (t) => {
   const { h, oauth, vault, storage, actor, token, id } = await setup(t); const first = await oauth.startOAuth(token);
   await assert.rejects(oauth.startOAuth(token));
   await oauth.finishOAuth('instagram', { state: first.state, error: 'access_denied' }, secretOf(first));
@@ -115,7 +126,7 @@ test('cancel, new bot ticket and delete prevent later callback; duplicate Start 
   assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM social_oauth_sessions').get().n, 0);
 });
 
-test('wrong owner preserves previous connection; disabled platform during final batch cannot save', async (t) => {
+await test('wrong owner preserves previous connection; disabled platform during final batch cannot save', async (t) => {
   const { h, oauth, vault, actor, token } = await setup(t); const first = await oauth.startOAuth(token);
   await oauth.finishOAuth('instagram', { state: first.state, code: 'code' }, secretOf(first));
   const previous = h.sqlite.prepare('SELECT ciphertext FROM social_connections').get().ciphertext;
@@ -133,21 +144,32 @@ test('wrong owner preserves previous connection; disabled platform during final 
   assert.equal((await oauth.oauthResult(third.state, secretOf(third))).status, 'error');
 });
 
-test('GET does not consume ticket; cross-origin Start refused; callback redirects to clean cookie-bound result', async (t) => {
+await test('form GET preserves browser Origin without ticket referrers; missing/null/foreign origins cannot start OAuth', async (t) => {
   const { h, token } = await setup(t); const route = h.load('app/connect/[token]/route.ts');
   const context = { params: Promise.resolve({ token }) }; const url = `https://fixture.example/connect/${token}`;
-  assert.equal((await route.GET(new Request(url), context)).status, 200);
+  const form = await route.GET(new Request(url), context);
+  assert.equal(form.status, 200); assert.equal(form.headers.get('referrer-policy'), 'strict-origin');
   assert.equal(h.sqlite.prepare('SELECT consumed FROM social_connect_tickets').get().consumed, 0);
-  const post = (origin) => route.POST(new Request(url, { method: 'POST', headers: { origin, 'content-type': 'application/x-www-form-urlencoded' }, body: 'action=oauth' }), context);
-  assert.equal((await post('https://evil.example')).status, 403);
+  const post = (origin) => route.POST(new Request(url, { method: 'POST', headers: { ...(origin === undefined ? {} : { origin }),
+    referer: 'https://fixture.example/', 'sec-fetch-site': 'same-origin', 'content-type': 'application/x-www-form-urlencoded' }, body: 'action=oauth' }), context);
+  for (const origin of ['https://evil.example', 'null', undefined]) {
+    const rejected = await post(origin);
+    assert.equal(rejected.status, 403);
+    assert.equal(rejected.headers.get('referrer-policy'), 'no-referrer');
+    assert.equal(h.sqlite.prepare('SELECT consumed FROM social_connect_tickets').get().consumed, 0);
+    assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM social_oauth_sessions').get().n, 0);
+  }
   const start = await post('https://fixture.example'); assert.equal(start.status, 303);
+  assert.equal(start.headers.get('referrer-policy'), 'no-referrer');
+  assert.match(start.headers.get('set-cookie'), /HttpOnly; Secure; SameSite=Lax/);
   const state = new URL(start.headers.get('location')).searchParams.get('state');
   const callback = h.load('app/connect/oauth/[provider]/callback/route.ts');
   const r = await callback.GET(new Request(`https://fixture.example/connect/oauth/instagram/callback?state=${state}&code=fixture-code`, { headers: { cookie: start.headers.get('set-cookie').split(';')[0] } }), { params: Promise.resolve({ provider: 'instagram' }) });
   assert.equal(r.status, 303); assert.equal(r.headers.get('location'), `/connect/result/${state}`); assert.match(r.headers.get('cache-control'), /no-store/);
+  assert.equal(r.headers.get('referrer-policy'), 'no-referrer');
 });
 
-test('manual invalid syntax is retryable; unrefreshable Instagram token never overwrites connection', async (t) => {
+await test('manual invalid syntax is retryable; unrefreshable Instagram token never overwrites connection', async (t) => {
   const { h, vault, token } = await setup(t);
   await assert.rejects(vault.saveConnectTicket(token, { accessToken: 'bad' }), /Вставьте/);
   assert.equal(h.sqlite.prepare('SELECT consumed FROM social_connect_tickets').get().consumed, 0);
@@ -156,7 +178,7 @@ test('manual invalid syntax is retryable; unrefreshable Instagram token never ov
   assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM social_connections').get().n, 0);
 });
 
-test('commit rechecks session TTL/status and ticket TTL after encryption', async (t) => {
+await test('commit rechecks session TTL/status and ticket TTL after encryption', async (t) => {
   for (const sql of ["UPDATE social_oauth_sessions SET expires_at='2000-01-01T00:00:00.000Z'", "UPDATE social_connect_tickets SET expires_at='2000-01-01T00:00:00.000Z'", "UPDATE social_oauth_sessions SET status='cancelled'"]) {
     const { h, oauth, token } = await setup(t); const start = await oauth.startOAuth(token);
     const batch = h.DB.batch.bind(h.DB);
@@ -167,7 +189,7 @@ test('commit rechecks session TTL/status and ticket TTL after encryption', async
   }
 });
 
-test('channel deletion during token exchange never resurrects credentials', async (t) => {
+await test('channel deletion during token exchange never resurrects credentials', async (t) => {
   const { h, oauth, storage, token, id } = await setup(t); const start = await oauth.startOAuth(token);
   const base = igFetch();
   t.mock.method(globalThis, 'fetch', async (url, init) => { if (new URL(url).hostname === 'api.instagram.com') await storage.deleteChannel({ id }); return base(url, init); });
@@ -175,7 +197,7 @@ test('channel deletion during token exchange never resurrects credentials', asyn
   assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM social_connections').get().n, 0);
 });
 
-test('refresh retry after lost ACK is idempotent; mismatched retry rejected', async (t) => {
+await test('refresh retry after lost ACK is idempotent; mismatched retry rejected', async (t) => {
   const { vault, oauth, storage, token, id } = await setup(t); const start = await oauth.startOAuth(token);
   await oauth.finishOAuth('instagram', { state: start.state, code: 'code' }, secretOf(start));
   const [claim] = await storage.claimDueChannels(); const c = await vault.collectorConnection({ channelId: id, leaseToken: claim.leaseToken });
@@ -186,12 +208,86 @@ test('refresh retry after lost ACK is idempotent; mismatched retry rejected', as
   await assert.rejects(vault.updateCollectorConnection({ ...input, version: 'stale', credentials: { accessToken: 'different-token' } }), /изменён/);
 });
 
-test('VK refresh sends confidential service token only for configured client', async () => {
+await test('VK refresh sends confidential service token only for configured client', async () => {
   for (const clientId of ['456', '789']) {
     const r = await refreshAccess('VK', { accessToken: 'fixture-access', refreshToken: 'fixture-refresh', deviceId: 'fixture-device', clientId }, { expectedAccountId: '42', vkClientId: '456', vkServiceToken: 'fixture-service', fetchImpl: async (_url, init) => {
       assert.equal(init.body.get('service_token'), clientId === '456' ? 'fixture-service' : null);
       return json({ access_token: 'fixture-new-access', refresh_token: 'fixture-new-refresh', expires_in: 3600, user_id: 42, state: init.body.get('state') });
     } });
     assert.equal(r.credentials.refreshToken, 'fixture-new-refresh');
+  }
+});
+
+await test('YouTube readiness requires Google app configuration and explicit enablement', () => {
+  const missing = integrationStatus({}).find((p) => p.id === 'youtube');
+  assert.equal(missing.ready, false);
+  assert.deepEqual(missing.missing, ['YOUTUBE_CLIENT_ID', 'YOUTUBE_CLIENT_SECRET', 'CONTENT_PUBLIC_ORIGIN', 'SOCIAL_VAULT_KEY']);
+  const configured = integrationStatus({ ...config, YOUTUBE_CLIENT_ID: 'fixture-client', YOUTUBE_CLIENT_SECRET: 'fixture-secret', YOUTUBE_OAUTH_ENABLED: 'true' }).find((p) => p.id === 'youtube');
+  assert.equal(configured.ready, true);
+  assert.equal(configured.callbackUrl, 'https://fixture.example/connect/oauth/youtube/callback');
+  assert.equal(integrationStatus(config).find((p) => p.id === 'youtube').ready, false);
+});
+
+await test('YouTube OAuth persists channel-bound bearer credentials, refresh retains type, replay/wrong channel/cancel preserve access', async (t) => {
+  const h = storageHarness(); t.after(h.close);
+  Object.assign(h.env, config, { YOUTUBE_CLIENT_ID: 'fixture-youtube-client', YOUTUBE_CLIENT_SECRET: 'fixture-youtube-secret', YOUTUBE_OAUTH_ENABLED: 'true' });
+  const { context } = await onboard(h);
+  const storage = h.load('db/storage.ts'), vault = h.load('db/social-connections.ts'), oauth = h.load('db/social-oauth.ts');
+  const id = await storage.createChannel({ creatorId: context.binding.id, url: 'https://youtube.com/@alice' });
+  const actor = { telegramUserId: '2001', id };
+  const channelId = 'UC1234567890123456789012';
+  let authorizedChannel = channelId, exchanges = 0, apiDisabledReason;
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    const u = new URL(url);
+    if (u.origin === 'https://oauth2.googleapis.com') {
+      exchanges++;
+      return json({ access_token: 'fixture-youtube-access', refresh_token: 'fixture-youtube-refresh', expires_in: 3600, token_type: 'Bearer', scope: 'https://www.googleapis.com/auth/youtube.readonly' });
+    }
+    assert.equal(init.headers.Authorization, 'Bearer fixture-youtube-access'); assert.equal(u.searchParams.has('key'), false);
+    assert.equal(u.pathname, '/youtube/v3/channels');
+    if (apiDisabledReason) return json({ error: { errors: [{ reason: apiDisabledReason }] } }, 403);
+    return json({ items: u.searchParams.has('mine') ? [{ id: authorizedChannel }] : [{ id: channelId, statistics: { videoCount: '0', viewCount: '0' }, snippet: { customUrl: '@alice' } }] });
+  });
+  const begin = async () => oauth.startOAuth((await vault.createConnectTicket(actor)).url.split('/').at(-1));
+  const first = await begin();
+  await assert.rejects(oauth.finishOAuth('youtube', { state: first.state, code: 'fixture' }, 'f'.repeat(64)), /истекла/);
+  await oauth.finishOAuth('youtube', { state: first.state, code: 'fixture' }, secretOf(first));
+  assert.equal((await oauth.oauthResult(first.state, secretOf(first))).status, 'complete');
+  await oauth.finishOAuth('youtube', { state: first.state, code: 'fixture-replay' }, secretOf(first)); assert.equal(exchanges, 1);
+  const [claim] = await storage.claimDueChannels();
+  let connection = await vault.collectorConnection({ channelId: id, leaseToken: claim.leaseToken });
+  assert.equal(connection.accountId, channelId); assert.equal(connection.credentials.authType, 'youtube_oauth');
+  assert.ok(!JSON.stringify(connection.credentials).includes(h.env.YOUTUBE_CLIENT_SECRET));
+  const refreshed = await refreshAccess('YouTube', connection.credentials, { env: h.env, expectedAccountId: channelId });
+  await vault.updateCollectorConnection({ channelId: id, leaseToken: claim.leaseToken, version: connection.version, ...refreshed });
+  connection = await vault.collectorConnection({ channelId: id, leaseToken: claim.leaseToken });
+  assert.equal(connection.credentials.authType, 'youtube_oauth');
+  const metrics = await collectAuthorized(claim, connection);
+  assert.equal(metrics.totalViews, 0); assert.equal(metrics.totalLikes, 0);
+  const previous = h.sqlite.prepare('SELECT ciphertext FROM social_connections WHERE channel_id=?').get(id).ciphertext;
+  authorizedChannel = 'UC0000000000000000000000';
+  const wrong = await begin(); await oauth.finishOAuth('youtube', { state: wrong.state, code: 'fixture' }, secretOf(wrong));
+  assert.equal((await oauth.oauthResult(wrong.state, secretOf(wrong))).status, 'error');
+  assert.equal(h.sqlite.prepare('SELECT ciphertext FROM social_connections WHERE channel_id=?').get(id).ciphertext, previous);
+  const cancelled = await begin(); await oauth.finishOAuth('youtube', { state: cancelled.state, error: 'access_denied' }, secretOf(cancelled));
+  assert.equal((await oauth.oauthResult(cancelled.state, secretOf(cancelled))).status, 'cancelled');
+  assert.equal(h.sqlite.prepare('SELECT ciphertext FROM social_connections WHERE channel_id=?').get(id).ciphertext, previous);
+  for (const reason of ['accessNotConfigured', 'SERVICE_DISABLED']) {
+    apiDisabledReason = reason;
+    const disabled = await begin();
+    await oauth.finishOAuth('youtube', { state: disabled.state, code: 'fixture' }, secretOf(disabled));
+    const result = await oauth.oauthResult(disabled.state, secretOf(disabled));
+    assert.equal(result.status, 'error');
+    assert.match(result.message, /Администратору.*приложении сервиса/);
+    assert.doesNotMatch(result.message, /API[- ]?ключ|Google Cloud|проекте ключа|переподключ|войдите заново/i);
+    assert.equal(h.sqlite.prepare('SELECT ciphertext FROM social_connections WHERE channel_id=?').get(id).ciphertext, previous);
+    assert.equal(h.sqlite.prepare('SELECT status FROM social_connections WHERE channel_id=?').get(id).status, 'connected');
+    const resultRoute = h.load('app/connect/result/[state]/route.ts');
+    const response = await resultRoute.GET(new Request(`https://fixture.example/connect/result/${disabled.state}`, {
+      headers: { cookie: disabled.cookie.split(';')[0] },
+    }), { params: Promise.resolve({ state: disabled.state }) });
+    const html = await response.text();
+    assert.match(html, /Администратору.*приложении сервиса/);
+    assert.doesNotMatch(html, /<h1>Доступ подключён|Google Cloud/);
   }
 });

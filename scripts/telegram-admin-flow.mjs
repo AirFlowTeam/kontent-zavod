@@ -51,7 +51,6 @@ export function createTelegramAdminFlow({ backend, send, botUsername, showPerson
     const edit = pending.get(actor.telegramUserId);
     if (text.startsWith('/')) pending.delete(actor.telegramUserId);
     if (/^\/admin(?:@\w+)?$/i.test(text)) { await home(chatId, actor); return true; }
-    if (/^\/start(?:@\w+)?$/i.test(text) && (await backend('context', actor)).isAdmin) { await home(chatId, actor); return true; }
     if (!edit) return false;
     pending.delete(actor.telegramUserId);
     if (text.startsWith('/')) return false;
